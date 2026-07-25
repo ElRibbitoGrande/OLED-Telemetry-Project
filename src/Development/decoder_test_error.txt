@@ -1,0 +1,3 @@
+﻿Status=Failure
+Error=curl.exe returned an empty response.
+Updated=2026-07-15 00:19:59.646

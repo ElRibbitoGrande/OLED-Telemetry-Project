@@ -1,0 +1,810 @@
+﻿# RainmeterDenon Telemetry 1.0 clean collector
+$ip = "192.168.0.128"
+$port = 23
+$outFile = "C:\RainmeterDenon\denon_status.txt"
+$tempFile = "C:\RainmeterDenon\denon_status.tmp"
+$heartbeatFile = "C:\RainmeterDenon\denon_heartbeat.txt"
+$decoderFile = "C:\RainmeterDenon\decoder_status.txt"
+
+# Prevent startup shortcuts or manual launches from creating competing collectors.
+$createdNew = $false
+$singleInstanceMutex = [System.Threading.Mutex]::new($true, "Local\RainmeterDenonStatusCollector", [ref]$createdNew)
+if (-not $createdNew) { exit 0 }
+
+# Fast-changing AVR events arrive over one persistent TCP connection.
+# Slower settings are refreshed from the Denon XML endpoints on separate schedules.
+$volumeQueryIntervalMs = 100
+$fastXmlIntervalMs = 750
+$audysseyIntervalMs = 5000
+$presetIntervalMs = 10000
+$quickSelectNamesIntervalMs = 10000
+$quickSelectNamesRetryIntervalMs = 10000
+$quickSelectNamesCacheFile = "C:\RainmeterDenon\Development\QuickSelectNames.xml"
+$reconnectDelayMs = 1000
+$loopDelayMs = 20
+$nextHeartbeat = Get-Date
+
+$client = $null
+$stream = $null
+$reader = $null
+$writer = $null
+$nextVolumeQuery = Get-Date
+$nextFastXml = Get-Date
+$nextAudysseyXml = Get-Date
+$nextPresetXml = Get-Date
+$nextQuickSelectNamesXml = Get-Date
+$nextReconnect = Get-Date
+$lastStatusText = ""
+
+# Use non-blocking HTTP requests so slow Denon XML endpoints can never stall
+# the fast volume/event loop.
+#
+# Windows PowerShell 5.1 does not always preload System.Net.Http in a hidden
+# process. Load it explicitly before referencing HttpClientHandler or compiling
+# the certificate callback.
+Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
+if (-not ("DenonCertificateValidator" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Net.Http;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+
+public static class DenonCertificateValidator
+{
+    public static bool Validate(
+        HttpRequestMessage request,
+        X509Certificate2 certificate,
+        X509Chain chain,
+        SslPolicyErrors errors)
+    {
+        return true;
+    }
+
+    public static Func<
+        HttpRequestMessage,
+        X509Certificate2,
+        X509Chain,
+        SslPolicyErrors,
+        bool> Create()
+    {
+        return Validate;
+    }
+}
+"@ -ReferencedAssemblies @(
+        [System.Net.Http.HttpClient].Assembly.Location
+    ) -ErrorAction Stop
+}
+
+# Create the shared HTTPS client lazily inside Start-XmlRequest. The earlier
+# top-level initialization could fail non-terminatingly and leave a null client
+# while the collector continued running.
+$script:httpClient = $null
+$audysseyXmlTask = $null
+$presetXmlTask = $null
+$quickSelectNamesXmlTask = $null
+
+# Temporary XML-task diagnostics. This records task state without flooding the
+# log on every 20 ms collector loop.
+$xmlTaskDiagnosticFile = "C:\RainmeterDenon\Development\XmlTaskState.log"
+$xmlTaskLastPendingLog = @{}
+$quickSelectNamesCurlProcess = $null
+$quickSelectNamesCurlTempFile = "C:\RainmeterDenon\Development\QuickSelectNames.live.tmp"
+$quickSelectNames = @{}
+
+$state = [ordered]@{
+    Volume = ""
+    Source = ""
+    QuickSelect = ""
+    QuickSelectName = ""
+    Mode = ""
+    VisualMode = "STEREO"
+    VisualModeCode = "0"
+    InputSignal = ""
+    SampleRate = ""
+    SpeakerPreset = ""
+    MultEQ = ""
+    DynamicEQ = ""
+    ReferenceLevelOffset = ""
+    DynamicVolume = "Off"
+}
+
+$lastVisualMode = "STEREO"
+$pendingVisualMode = ""
+$pendingVisualCount = 0
+$requiredStableReads = 2
+
+function Close-DenonConnection {
+    foreach ($object in @($script:reader, $script:writer, $script:stream, $script:client)) {
+        if ($null -ne $object) {
+            try { $object.Dispose() } catch {}
+        }
+    }
+    $script:reader = $null
+    $script:writer = $null
+    $script:stream = $null
+    $script:client = $null
+}
+
+function Connect-Denon {
+    Close-DenonConnection
+
+    $script:client = [System.Net.Sockets.TcpClient]::new()
+    $script:client.NoDelay = $true
+    $script:client.Connect($script:ip, $script:port)
+    $script:stream = $script:client.GetStream()
+    $script:reader = [System.IO.StreamReader]::new($script:stream, [System.Text.Encoding]::ASCII, $false, 1024, $true)
+    $script:writer = [System.IO.StreamWriter]::new($script:stream, [System.Text.Encoding]::ASCII, 1024, $true)
+    $script:writer.NewLine = "`r"
+    $script:writer.AutoFlush = $true
+
+    # Seed the live values immediately. Subsequent changes are pushed by the AVR.
+    $script:writer.WriteLine("MV?")
+    $script:writer.WriteLine("SI?")
+    $script:writer.WriteLine("MS?")
+    $script:writer.WriteLine("MSQUICK ?")
+}
+
+function Convert-DenonVolume($raw) {
+    if ([string]::IsNullOrWhiteSpace($raw)) { return "" }
+
+    $v = ([string]$raw -replace "^MV", "").Trim()
+    if ($v -match "^MAX") { return "" }
+
+    if ($v -match "^\d{3}$") {
+        $absolute = [double]($v.Insert($v.Length - 1, "."))
+    }
+    elseif ($v -match "^\d{2}$") {
+        $absolute = [double]$v
+    }
+    else {
+        return ""
+    }
+
+    $relative = $absolute - 80.0
+    if ($relative -gt 0) { return "+{0:0.0}" -f $relative }
+    return "{0:0.0}" -f $relative
+}
+
+function ConvertTo-DenonXml($raw) {
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    try { return [xml]$raw } catch { return $null }
+}
+
+function Map-MultEQ($v) {
+    switch ([string]$v) {
+        "1" { "Reference" }
+        "2" { "L/R Bypass" }
+        "3" { "Flat" }
+        "4" { "Off" }
+        default { [string]$v }
+    }
+}
+
+function Map-OnOff($v) {
+    switch ([string]$v) {
+        "1" { "On" }
+        "2" { "Off" }
+        default { [string]$v }
+    }
+}
+
+function Format-InputSignal($v) {
+    if ([string]::IsNullOrWhiteSpace($v)) { return "" }
+
+    $display = ([string]$v).Trim().ToUpperInvariant()
+
+    if ($display -match "ATMOS") { return "Dolby Atmos" }
+    if ($display -match "DTS:X") { return "DTS:X" }
+    if ($display -match "DTS[- ]HD.*(MSTR|MASTER|MA)") { return "DTS-HD MA" }
+    if ($display -match "TRUEHD") { return "Dolby TrueHD" }
+    if ($display -match "DOLBY AUDIO - DD\+|DOLBY DIGITAL PLUS|DD\+") { return "Dolby Digital Plus" }
+    if ($display -match "DOLBY AUDIO - DD|DOLBY DIGITAL|^DD$") { return "Dolby Digital" }
+    if ($display -match "MULTICHANNEL PCM|PCM MULTI|MULTI CH") { return "Multichannel PCM" }
+    if ($display -match "^PCM$|2\.0.*PCM|PCM.*2\.0") { return "Stereo PCM" }
+    if ($display -match "^DTS$") { return "DTS" }
+
+    return (Get-Culture).TextInfo.ToTitleCase($display.ToLowerInvariant())
+}
+
+function Format-ListeningMode($mode) {
+    if ([string]::IsNullOrWhiteSpace($mode)) { return "" }
+
+    $clean = ([string]$mode).ToUpperInvariant()
+    $clean = $clean.Replace("DOLBY AUDIO - DOLBY SURROUND", "DOLBY SURROUND")
+    $clean = $clean.Replace("DOLBY AUDIO - DOLBY ATMOS", "DOLBY ATMOS")
+    $clean = $clean.Replace("DOLBY ATMOS - DD+", "DOLBY ATMOS")
+    $clean = $clean.Replace("DOLBY ATMOS - TRUEHD", "DOLBY ATMOS")
+    $clean = $clean.Replace("DOLBY AUDIO - DD+ + DSUR", "DOLBY SURROUND")
+    $clean = $clean.Replace("DOLBY AUDIO - DD+ + NEURAL:X", "NEURAL:X")
+    $clean = $clean.Replace("DOLBY AUDIO - DD + DSUR", "DOLBY SURROUND")
+    $clean = $clean.Replace("DOLBY AUDIO - DD + NEURAL:X", "NEURAL:X")
+    $clean = $clean.Replace("DOLBY AUDIO - DD+", "DD+")
+    $clean = $clean.Replace("DOLBY AUDIO - DD", "DD")
+
+    if ($clean -match "ATMOS") { return "DOLBY ATMOS" }
+    if ($clean -match "DSUR") { return "DOLBY SURROUND" }
+    if ($clean -match "NEURAL:X") { return "NEURAL:X" }
+    return $clean
+}
+
+function Get-StableVisualMode($detectedVisualMode) {
+    if ([string]::IsNullOrWhiteSpace($detectedVisualMode)) { return $script:lastVisualMode }
+
+    if ($detectedVisualMode -eq $script:lastVisualMode) {
+        $script:pendingVisualMode = ""
+        $script:pendingVisualCount = 0
+        return $script:lastVisualMode
+    }
+
+    if ($detectedVisualMode -eq $script:pendingVisualMode) {
+        $script:pendingVisualCount++
+        if ($script:pendingVisualCount -ge $script:requiredStableReads) {
+            $script:lastVisualMode = $detectedVisualMode
+            $script:pendingVisualMode = ""
+            $script:pendingVisualCount = 0
+        }
+        return $script:lastVisualMode
+    }
+
+    $script:pendingVisualMode = $detectedVisualMode
+    $script:pendingVisualCount = 1
+    return $script:lastVisualMode
+}
+
+function Update-VisualMode {
+    $mode = [string]$script:state.Mode
+    $signal = "{0} {1}" -f $script:state.InputSignal, $script:state.Mode
+    $detected = "STEREO"
+
+    if (
+        $mode -match "ATMOS" -or
+        $signal -match "ATMOS" -or
+        ($mode -eq "DSUR" -and $signal -match "DOLBY|DD")
+    ) {
+        $detected = "ATMOS"
+    }
+
+    $stable = Get-StableVisualMode $detected
+    $script:state.VisualMode = $stable
+    $script:state.VisualModeCode = if ($stable -eq "ATMOS") { "1" } else { "0" }
+}
+
+function Process-DenonLine($line) {
+    if ([string]::IsNullOrWhiteSpace($line)) { return }
+    $line = $line.Trim()
+
+    # Volume responses must be handled before the more general MS handlers.
+    if ($line -match "^MV\d{2,3}$") {
+        $converted = Convert-DenonVolume $line
+        if ($converted) { $script:state.Volume = $converted }
+        return
+    }
+
+    # The AVR sometimes answers the Quick Select query with MSQUICK 0 while it is
+    # between states. Treat that as "no valid update" and never let it fall through
+    # to the generic MS listening-mode parser.
+    if ($line -match "^MSQUICK\s*0$") { return }
+
+    if ($line -match "^MSQUICK\s*([1-4])$") {
+        $number = [int]$Matches[1]
+        $script:state.QuickSelect = [string]$number
+
+        if ($script:quickSelectNames.ContainsKey($number)) {
+            $script:state.QuickSelectName = [string]$script:quickSelectNames[$number]
+        }
+        else {
+            $script:state.QuickSelectName = "Quick Select $number"
+        }
+
+        # Quick Selects 1-2 are the HTPC presets; 3-4 are the Lyr presets.
+        # This gives an immediate truthful Source value even while the AVR is
+        # still settling and before the separate SI response arrives.
+        switch ($number) {
+            1 { $script:state.Source = "HTPC" }
+            2 { $script:state.Source = "HTPC" }
+            3 { $script:state.Source = "LYR+" }
+            4 { $script:state.Source = "LYR+" }
+        }
+        return
+    }
+
+    # Handle the AVR's actual input-source response. The collector already sends
+    # SI? when it connects, but the previous version never parsed the reply, so
+    # Source remained whatever stale value was imported from denon_status.txt.
+    if ($line -match "^SI(.+)$") {
+        $rawSource = $Matches[1].Trim()
+
+        switch ($rawSource.ToUpperInvariant()) {
+            "CBL/SAT" { $script:state.Source = "HTPC" }
+            "SAT/CBL" { $script:state.Source = "HTPC" }
+            "GAME"    { $script:state.Source = "LYR+" }
+            "DVD"     { $script:state.Source = "PS5" }
+            "8K"      { $script:state.Source = "XBOX" }
+            default   { $script:state.Source = $rawSource.ToUpperInvariant() }
+        }
+        return
+    }
+
+    # Source and listening-mode events are useful for immediate responsiveness;
+    # the XML refresh still supplies the friendly source name and authoritative mode.
+    # Explicitly exclude every MSQUICK response so it can never become "Quick0".
+    if ($line -match "^MS(?!QUICK)(.+)$") {
+        $script:state.Mode = Format-ListeningMode $Matches[1]
+        Update-VisualMode
+        return
+    }
+}
+
+function Apply-FastXml($info) {
+    if ($null -eq $info) { return }
+
+    $source = [string]$info.Information.Zone.MainZone.Name
+    if ([string]::IsNullOrWhiteSpace($source)) {
+        $source = [string]$info.Information.Zone.MainZone.SelectSource
+    }
+
+    switch ($source) {
+        "CBL/SAT" { $source = "PC" }
+        "SAT/CBL" { $source = "PC" }
+        "DVD" { $source = "PS5" }
+        "8K" { $source = "XBOX" }
+    }
+
+    $script:state.Source = $source
+    $script:state.Mode = Format-ListeningMode ([string]$info.Information.Audio.SoundMode)
+    $script:state.InputSignal = Format-InputSignal ([string]$info.Information.Audio.InputSignal)
+    $script:state.SampleRate = [string]$info.Information.Audio.SampleRate
+    Update-VisualMode
+}
+
+function Apply-AudysseyXml($audyssey) {
+    if ($null -eq $audyssey) { return }
+
+    $multiNode = $audyssey.SelectSingleNode("//MultEQ")
+    $dynamicNode = $audyssey.SelectSingleNode("//DynamicEQ")
+    $rloNode = $audyssey.SelectSingleNode("//ReferenceLevelOffset")
+    $dynamicVolumeNode = $audyssey.SelectSingleNode("//DynamicVolume")
+
+    if ($null -ne $multiNode) { $script:state.MultEQ = Map-MultEQ $multiNode.InnerText }
+
+    if ($null -ne $rloNode) {
+        $script:state.ReferenceLevelOffset = "{0} dB" -f $rloNode.InnerText
+    }
+
+    if ($null -ne $dynamicNode) {
+        $dynamicEnabled = (Map-OnOff $dynamicNode.InnerText) -eq "On"
+        if (-not $dynamicEnabled) {
+            $script:state.DynamicEQ = "Off"
+        }
+        elseif ($null -ne $rloNode -and $rloNode.InnerText -match "^(0|5|10|15)$") {
+            $script:state.DynamicEQ = "{0} dB" -f $rloNode.InnerText
+        }
+        else {
+            $script:state.DynamicEQ = "On"
+        }
+    }
+
+    if ($null -ne $dynamicVolumeNode) {
+        $script:state.DynamicVolume = if ($dynamicVolumeNode.InnerText -eq "4") { "Off" } else { [string]$dynamicVolumeNode.InnerText }
+    }
+}
+
+function Apply-PresetXml($presetXml) {
+    if ($null -ne $presetXml -and $null -ne $presetXml.SpeakerPreset) {
+        $script:state.SpeakerPreset = [string]$presetXml.SpeakerPreset
+    }
+}
+
+function Apply-QuickSelectNamesXml($quickSelectXml) {
+    if ($null -eq $quickSelectXml) { return }
+
+    $names = @{}
+    foreach ($item in $quickSelectXml.QuickSelectNames.Item) {
+        try {
+            $number = ([int]$item.index) + 1
+            $nameNode = $item.SelectSingleNode("Name")
+            $name = if ($null -ne $nameNode) { ([string]$nameNode.InnerText).Trim() } else { "" }
+
+            if (-not [string]::IsNullOrWhiteSpace($name)) {
+                $names[$number] = $name
+            }
+        }
+        catch {}
+    }
+
+    if ($names.Count -gt 0) {
+        $script:quickSelectNames = $names
+
+        # Persist every successful live response so the startup cache can never
+        # remain older than the names currently published by the AVR.
+        try {
+            $cacheDirectory = Split-Path -Parent $script:quickSelectNamesCacheFile
+            if (-not (Test-Path -LiteralPath $cacheDirectory)) {
+                New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
+            }
+            $quickSelectXml.Save($script:quickSelectNamesCacheFile)
+        }
+        catch {}
+
+        $current = 0
+        if ([int]::TryParse([string]$script:state.QuickSelect, [ref]$current) -and
+            $script:quickSelectNames.ContainsKey($current)) {
+            $script:state.QuickSelectName = [string]$script:quickSelectNames[$current]
+        }
+    }
+}
+
+function Import-QuickSelectNamesCache {
+    if (-not (Test-Path -LiteralPath $script:quickSelectNamesCacheFile)) { return $false }
+
+    try {
+        $xml = [xml](Get-Content -LiteralPath $script:quickSelectNamesCacheFile -Raw -ErrorAction Stop)
+        Apply-QuickSelectNamesXml $xml
+        return ($script:quickSelectNames.Count -gt 0)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Apply-DecoderStatusFile {
+    if (-not (Test-Path -LiteralPath $script:decoderFile)) { return }
+
+    try {
+        $values = @{}
+        foreach ($line in Get-Content -LiteralPath $script:decoderFile -ErrorAction Stop) {
+            if ($line -match "^([^=]+)=(.*)$") {
+                $values[$Matches[1]] = $Matches[2]
+            }
+        }
+
+        if ($values.ContainsKey("Mode") -and -not [string]::IsNullOrWhiteSpace($values["Mode"])) {
+            $script:state.Mode = [string]$values["Mode"]
+        }
+        if ($values.ContainsKey("InputSignal") -and -not [string]::IsNullOrWhiteSpace($values["InputSignal"])) {
+            $script:state.InputSignal = [string]$values["InputSignal"]
+        }
+        if ($values.ContainsKey("SampleRate") -and -not [string]::IsNullOrWhiteSpace($values["SampleRate"])) {
+            $script:state.SampleRate = [string]$values["SampleRate"]
+        }
+        Update-VisualMode
+    }
+    catch {}
+}
+
+
+function Start-QuickSelectNamesCurlRequest {
+    try {
+        $cacheDirectory = Split-Path -Parent $script:quickSelectNamesCurlTempFile
+        if (-not (Test-Path -LiteralPath $cacheDirectory)) {
+            New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
+        }
+        Remove-Item -LiteralPath $script:quickSelectNamesCurlTempFile -Force -ErrorAction SilentlyContinue
+
+        $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $url = "https://$script:ip`:10443/ajax/general/get_config?type=7&_=$cacheBust"
+        $arguments = @(
+            '-k',
+            '--silent',
+            '--show-error',
+            '--max-time', '15',
+            '--output', $script:quickSelectNamesCurlTempFile,
+            $url
+        )
+
+        return Start-Process -FilePath 'curl.exe' -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    }
+    catch {
+        return $null
+    }
+}
+
+function Complete-QuickSelectNamesCurlRequest {
+    if ($null -eq $script:quickSelectNamesCurlProcess) { return $false }
+    if (-not $script:quickSelectNamesCurlProcess.HasExited) { return $false }
+
+    try {
+        if ($script:quickSelectNamesCurlProcess.ExitCode -eq 0 -and
+            (Test-Path -LiteralPath $script:quickSelectNamesCurlTempFile)) {
+
+            $raw = Get-Content -LiteralPath $script:quickSelectNamesCurlTempFile -Raw -ErrorAction Stop
+            $xml = ConvertTo-DenonXml $raw
+            if ($null -ne $xml) {
+                Apply-QuickSelectNamesXml $xml
+            }
+        }
+    }
+    catch {}
+    finally {
+        try { $script:quickSelectNamesCurlProcess.Dispose() } catch {}
+        $script:quickSelectNamesCurlProcess = $null
+        Remove-Item -LiteralPath $script:quickSelectNamesCurlTempFile -Force -ErrorAction SilentlyContinue
+    }
+
+    return $true
+}
+
+function Start-XmlRequest($url) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($url)) {
+            throw "Start-XmlRequest received an empty URL."
+        }
+
+        if ($null -eq $script:httpClient) {
+            $handler = [System.Net.Http.HttpClientHandler]::new()
+            $handler.ServerCertificateCustomValidationCallback =
+                [DenonCertificateValidator]::Create()
+
+            $client = [System.Net.Http.HttpClient]::new($handler)
+            $client.Timeout = [TimeSpan]::FromSeconds(10)
+            $client.DefaultRequestHeaders.CacheControl =
+                [System.Net.Http.Headers.CacheControlHeaderValue]::new()
+            $client.DefaultRequestHeaders.CacheControl.NoCache = $true
+            $client.DefaultRequestHeaders.CacheControl.NoStore = $true
+
+            $script:httpClient = $client
+
+            "$(Get-Date -Format o) | HTTP CLIENT INITIALIZED" |
+                Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+        }
+
+        $separator = if ($url.Contains("?")) { "&" } else { "?" }
+        $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $requestUrl = "$url$separator`_=$cacheBust"
+
+        return $script:httpClient.GetStringAsync($requestUrl)
+    }
+    catch {
+        @"
+===== $(Get-Date -Format o) | START FAILED =====
+URL: $url
+Invocation: $($_.InvocationInfo.PositionMessage)
+Exception type: $($_.Exception.GetType().FullName)
+Message: $($_.Exception.Message)
+Stack: $($_.ScriptStackTrace)
+"@ | Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+
+        if ($null -ne $script:httpClient) {
+            try { $script:httpClient.Dispose() } catch {}
+            $script:httpClient = $null
+        }
+
+        return $null
+    }
+}
+
+function Complete-XmlTask($task, $applyScriptBlock, $label) {
+    if ($null -eq $task) { return $false }
+
+    if (-not $task.IsCompleted) {
+        $now = Get-Date
+        $lastLog = $script:xmlTaskLastPendingLog[$label]
+
+        if ($null -eq $lastLog -or ($now - $lastLog).TotalSeconds -ge 2) {
+            "{0} | {1} | Status={2}; Completed={3}; Faulted={4}; Canceled={5}" -f `
+                $now.ToString("o"),
+                $label,
+                $task.Status,
+                $task.IsCompleted,
+                $task.IsFaulted,
+                $task.IsCanceled |
+                    Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+
+            $script:xmlTaskLastPendingLog[$label] = $now
+        }
+
+        return $false
+    }
+
+    $script:xmlTaskLastPendingLog.Remove($label)
+
+    if ($task.IsCanceled) {
+        "$(Get-Date -Format o) | $label | CANCELED" |
+            Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+        return $true
+    }
+
+    if ($task.IsFaulted) {
+        @"
+===== $(Get-Date -Format o) | $label | FAULTED =====
+Status: $($task.Status)
+$($task.Exception.GetBaseException() | Format-List * -Force | Out-String)
+"@ | Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+        return $true
+    }
+
+    try {
+        $raw = $task.Result
+        $rawPath = "C:\RainmeterDenon\Development\$label-Raw.xml"
+        $raw | Set-Content -LiteralPath $rawPath -Encoding UTF8
+
+        $xml = ConvertTo-DenonXml $raw
+        if ($null -eq $xml) {
+            "$(Get-Date -Format o) | $label | ConvertTo-DenonXml returned null" |
+                Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+            return $true
+        }
+
+        & $applyScriptBlock $xml
+
+        "$(Get-Date -Format o) | $label | SUCCESS | Length=$($raw.Length)" |
+            Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+    }
+    catch {
+        @"
+===== $(Get-Date -Format o) | $label | APPLY FAILED =====
+$($_ | Out-String)
+$($_.Exception | Format-List * -Force | Out-String)
+"@ | Add-Content -LiteralPath $script:xmlTaskDiagnosticFile
+    }
+
+    return $true
+}
+
+function Write-StatusIfChanged {
+    $dynamicEqDisplay = $script:state.DynamicEQ
+    if ($dynamicEqDisplay -eq "On" -and $script:state.ReferenceLevelOffset -match "^(0|5|10|15) dB$") {
+        $dynamicEqDisplay = $script:state.ReferenceLevelOffset
+    }
+
+    $statusText = @"
+Volume=$($script:state.Volume) dB
+Source=$($script:state.Source)
+QuickSelect=$($script:state.QuickSelect)
+QuickSelectName=$($script:state.QuickSelectName)
+Mode=$($script:state.Mode)
+VisualMode=$($script:state.VisualMode)
+VisualModeCode=$($script:state.VisualModeCode)
+InputSignal=$($script:state.InputSignal)
+SampleRate=$($script:state.SampleRate)
+SpeakerPreset=$($script:state.SpeakerPreset)
+MultEQ=$($script:state.MultEQ)
+DynamicEQ=$dynamicEqDisplay
+ReferenceLevelOffset=$($script:state.ReferenceLevelOffset)
+DynamicVolume=$($script:state.DynamicVolume)
+"@
+
+    if ($statusText -eq $script:lastStatusText) { return }
+
+    Set-Content -Path $script:tempFile -Value $statusText -Encoding ASCII
+    Move-Item -Path $script:tempFile -Destination $script:outFile -Force
+    $script:lastStatusText = $statusText
+}
+
+# Preserve the working display during startup by importing the last known status file.
+if (Test-Path $outFile) {
+    foreach ($line in Get-Content $outFile -ErrorAction SilentlyContinue) {
+        if ($line -match "^([^=]+)=(.*)$") {
+            $key = $Matches[1]
+            $value = $Matches[2]
+            if ($key -eq "Volume") { $value = $value -replace "\s*dB\s*$", "" }
+            if ($state.Contains($key)) { $state[$key] = $value }
+        }
+    }
+    $lastVisualMode = [string]$state.VisualMode
+}
+
+# Load the known-good local name cache immediately so Quick Select labels work
+# even if the AVR web server is slow or busy during collector startup.
+[void](Import-QuickSelectNamesCache)
+
+try {
+    while ($true) {
+        $now = Get-Date
+
+        if ($null -eq $client -or -not $client.Connected) {
+            if ($now -ge $nextReconnect) {
+                try {
+                    Connect-Denon
+                    $nextReconnect = $now
+                }
+                catch {
+                    Close-DenonConnection
+                    $nextReconnect = $now.AddMilliseconds($reconnectDelayMs)
+                }
+            }
+        }
+
+        if ($null -ne $client -and $client.Connected) {
+            try {
+                # Drain every unsolicited AVR event currently waiting on the socket.
+                while ($stream.DataAvailable) {
+                    $line = $reader.ReadLine()
+                    Process-DenonLine $line
+                }
+            }
+            catch {
+                Close-DenonConnection
+                $nextReconnect = (Get-Date).AddMilliseconds($reconnectDelayMs)
+            }
+        }
+
+        $now = Get-Date
+
+        # Do not depend on unsolicited Denon events. Ask for volume ten times per
+        # second over the already-open socket; the reply is handled above.
+        if ($null -ne $client -and $client.Connected -and $now -ge $nextVolumeQuery) {
+            try { $writer.WriteLine("MV?") } catch {}
+            $nextVolumeQuery = $now.AddMilliseconds($volumeQueryIntervalMs)
+        }
+
+        # Quick Select is not reliably announced when recalled from the remote,
+        # so query its current state once per second over the existing connection.
+        if ($null -eq $script:nextQuickSelectQuery) {
+            $script:nextQuickSelectQuery = $now
+        }
+
+        if ($null -ne $client -and
+            $client.Connected -and
+            $now -ge $script:nextQuickSelectQuery) {
+
+            try { $writer.WriteLine("MSQUICK ?") } catch {}
+            $script:nextQuickSelectQuery = $now.AddSeconds(1)
+        }
+
+        # Decoder state is maintained by DecoderCollector.ps1 because the Denon's
+        # HTTPS endpoint takes several seconds to complete TLS renegotiation.
+        if ($now -ge $nextFastXml) {
+            Apply-DecoderStatusFile
+            $nextFastXml = (Get-Date).AddMilliseconds($fastXmlIntervalMs)
+        }
+        # The Denon's HTTPS server is effectively single-lane. Give the Quick
+        # Select-name request priority and do not launch Audyssey/preset requests
+        # while it is in flight; otherwise type=7 can repeatedly time out behind
+        # the other XML polls even though the endpoint works in a browser.
+        if ($null -eq $quickSelectNamesCurlProcess -and
+            $null -eq $audysseyXmlTask -and
+            $null -eq $presetXmlTask -and
+            $now -ge $nextQuickSelectNamesXml) {
+
+            $quickSelectNamesCurlProcess = Start-QuickSelectNamesCurlRequest
+            $nextQuickSelectNamesXml = $now.AddMilliseconds($quickSelectNamesIntervalMs)
+        }
+
+        if ($null -eq $quickSelectNamesCurlProcess -and
+            $null -eq $audysseyXmlTask -and
+            $now -ge $nextAudysseyXml) {
+
+            $audysseyXmlTask = Start-XmlRequest "https://$ip`:10443/ajax/audio/get_config?type=9"
+            $nextAudysseyXml = $now.AddMilliseconds($audysseyIntervalMs)
+        }
+
+        if ($null -eq $quickSelectNamesCurlProcess -and
+            $null -eq $presetXmlTask -and
+            $now -ge $nextPresetXml) {
+
+            $presetXmlTask = Start-XmlRequest "https://$ip`:10443/ajax/globals/get_config?type=10"
+            $nextPresetXml = $now.AddMilliseconds($presetIntervalMs)
+        }
+
+        if (Complete-XmlTask $audysseyXmlTask ${function:Apply-AudysseyXml} "Audyssey") { $audysseyXmlTask = $null }
+        if (Complete-XmlTask $presetXmlTask ${function:Apply-PresetXml} "Preset") { $presetXmlTask = $null }
+        if (Complete-QuickSelectNamesCurlRequest) {
+            if ($script:quickSelectNames.Count -eq 0) {
+                $nextQuickSelectNamesXml = (Get-Date).AddMilliseconds($quickSelectNamesRetryIntervalMs)
+            }
+        }
+
+        if ((Get-Date) -ge $nextHeartbeat) {
+            Set-Content -LiteralPath $heartbeatFile -Value (Get-Date -Format 'o') -Encoding ASCII
+            $nextHeartbeat = (Get-Date).AddSeconds(2)
+        }
+        Write-StatusIfChanged
+        Start-Sleep -Milliseconds $loopDelayMs
+    }
+}
+finally {
+    if ($null -ne $quickSelectNamesCurlProcess) {
+        try { $quickSelectNamesCurlProcess.Kill() } catch {}
+        try { $quickSelectNamesCurlProcess.Dispose() } catch {}
+    }
+    Close-DenonConnection
+    try { $httpClient.Dispose() } catch {}
+    try { $httpHandler.Dispose() } catch {}
+    try { $singleInstanceMutex.ReleaseMutex() } catch {}
+    try { $singleInstanceMutex.Dispose() } catch {}
+}
+
+
+

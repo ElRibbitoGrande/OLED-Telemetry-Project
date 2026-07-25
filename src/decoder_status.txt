@@ -1,0 +1,6 @@
+Mode=DOLBY SURROUND
+InputSignal=Stereo PCM
+SampleRate=48 kHz
+SoundModeRaw=Dolby Audio - Dolby Surround
+InputSignalRaw=PCM
+Updated=2026-07-25 10:20:31.293

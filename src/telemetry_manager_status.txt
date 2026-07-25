@@ -1,0 +1,15 @@
+Manager=Running
+ManagerPID=17232
+DenonCollector=Running
+DenonPID=4580
+DenonHeartbeatAgeSeconds=1.5
+NowPlayingRouter=Running
+RouterPID=15024
+ActiveMetadataCollector=WiiM
+ApplePID=
+WiiMPID=17304
+NowPlayingStateAgeSeconds=0.3
+DecoderCollector=Running
+DecoderPID=17124
+DecoderHeartbeatAgeSeconds=2.7
+Updated=2026-07-24 21:18:35

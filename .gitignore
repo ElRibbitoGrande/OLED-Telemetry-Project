@@ -1,0 +1,48 @@
+# Private ChatGPT conversation archives
+docs/chat-archive/
+docs/private/
+
+# Diagnostic output and runtime state
+diagnostics/
+*.log
+*.tmp
+*.lock
+*.pid
+
+# Generated telemetry data
+nowplaying.json
+telemetry.json
+denon_status.json
+wiim_status.json
+status.json
+
+# Generated or cached artwork
+cache/
+artwork-cache/
+album-art/
+current-art.*
+
+# Secrets and private configuration
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+credentials.json
+secrets.json
+config.private.json
+
+# Backups and temporary copies
+*.bak
+*.old
+*~
+*-backup.*
+*-before.*
+*-test.*
+
+# Windows/editor files
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/

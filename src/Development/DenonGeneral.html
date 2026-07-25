@@ -1,0 +1,527 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" dir="ltr">
+
+<head>
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Cache-Control" content="no-cache">
+    <title>General</title>
+    <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=0" />
+    <link rel="stylesheet" type="text/css" href="../common.css" />
+    <script type="text/javascript" src="../jquery.js"></script>
+    <script type="text/javascript" src="../polyfill.min.js"></script>
+    <script type="text/javascript" src="../LanguageStrings.js"></script>
+    <script type="text/javascript" src="../GlobalsServerInterface.js"></script>
+    <script type="text/javascript" src="../GlobalsSettings.js"></script>
+    <script type="text/javascript" src="GeneralServerInterface.js"></script>
+    <script type="text/javascript" src="GeneralSettings.js"></script>
+</head>
+
+<body>
+    <div class="main">
+        <div class="left">
+            <div id="goback" class="config-goback"></div>
+            <div class="iconleftmenu">
+                <ul></ul>
+            </div>
+            <div class="leftmenu">
+                <ul></ul>
+            </div>
+        </div>
+        <div class="right">
+            <div class="rightmenu">
+                <ul></ul>
+            </div>
+            <div class="header">
+                <table>
+                    <tr>
+                        <td>
+                            <div class="icon"></div>
+                        </td>
+                        <td>
+                            <div class="title"></div>
+                        </td>
+                    </tr>
+                </table>
+                <div class="clear"></div>
+                <table>
+                    <tr>
+                        <td>
+                            <div class="help"></div>
+                        </td>
+                    </tr>
+                </table>
+                <hr size="2">
+            </div>
+            <div class="clear"></div>
+            <div id="func_language">
+                <table>
+                    <tr>
+                        <td>
+                            <div id="lbl_language" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_language"><select id="language"></select></div>
+                        </td>
+                    </tr>
+                </table>                
+            </div>
+            <div id="func_manual">
+                <table>
+                    <tr>
+                        <td><div id="lbl_manual" class="name_item"></div></td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_eco">
+                <table class="eco_mode_table">
+                    <tr>
+                        <td>
+                            <div id="lbl_title_eco_mode" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_eco_mode" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_eco_mode">
+                                <select id="eco_mode_value"></select>
+                            </div>
+                            <div id="lbl_eco_mode_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_power_on_default" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_power_on_default">
+                                <select id="power_on_default_value"></select>
+                            </div>
+                            <div id="lbl_power_on_default_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_on_screen_display" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_on_screen_display">
+                                <select id="on_screen_display_value"></select>
+                            </div>
+                            <div id="lbl_on_screen_display_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr></tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_title_auto_standby" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_auto_standby_single_zone">
+                                <select id="auto_standby_single_zone_value"></select>
+                            </div>
+                            <div id="lbl_auto_standby_single_zone_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_auto_standby_main_zone" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_auto_standby_main_zone">
+                                <select id="auto_standby_main_zone_value"></select>
+                            </div>
+                            <div id="lbl_auto_standby_main_zone_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_auto_standby_zone2" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_auto_standby_zone2">
+                                <select id="auto_standby_zone2_value"></select>
+                            </div>
+                            <div id="lbl_auto_standby_zone2_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_auto_standby_zone3" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_auto_standby_zone3">
+                                <select id="auto_standby_zone3_value"></select>
+                            </div>
+                            <div id="lbl_auto_standby_zone3_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_zone2_setup">
+                <table>
+                    <tr>
+                        <td><div id="lbl_zone2_bass" class="name_item"></div></td>
+                        <td><div id="lst_zone2_bass"><select id="zone2_bass_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_treble" class="name_item"></div></td>
+                        <td><div id="lst_zone2_treble"><select id="zone2_treble_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_highpassfilter" class="name_item"></div></td>
+                        <td><div id="lst_zone2_highpassfilter"><select id="zone2_highpassfilter_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_lchlevel" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone2_lchlevel"><select id="zone2_lchlevel_value"></select></div>
+                            <div id="lbl_zone2_lchlevel_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_rchlevel" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone2_rchlevel"><select id="zone2_rchlevel_value"></select></div>
+                            <div id="lbl_zone2_rchlevel_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_channel" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone2_channel"><select id="zone2_channel_value"></select></div>
+                            <div id="lbl_zone2_channel_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_hdmiaudio" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone2_hdmiaudio"><select id="zone2_hdmiaudio_value"></select></div>
+                            <div id="lbl_zone2_hdmiaudio_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_volumelevel" class="name_item"></div></td>
+                        <td><div id="lst_zone2_volumelevel"><select id="zone2_volumelevel_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_volumelimit" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone2_volumelimit"><select id="zone2_volumelimit_value"></select></div>
+                            <div id="lbl_zone2_volumelimit_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_poweronvolume" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone2_poweronvolume"><select id="zone2_poweronvolume_value"></select></div>
+                            <div id="lbl_zone2_poweronvolume_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone2_mutelevel" class="name_item"></div></td>
+                        <td><div id="lst_zone2_mutelevel"><select id="zone2_mutelevel_value"></select></div></td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_zone3_setup">
+                <table>
+                    <tr>
+                        <td><div id="lbl_zone3_bass" class="name_item"></div></td>
+                        <td><div id="lst_zone3_bass"><select id="zone3_bass_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_treble" class="name_item"></div></td>
+                        <td><div id="lst_zone3_treble"><select id="zone3_treble_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_highpassfilter" class="name_item"></div></td>
+                        <td><div id="lst_zone3_highpassfilter"><select id="zone3_highpassfilter_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_lchlevel" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone3_lchlevel"><select id="zone3_lchlevel_value"></select></div>
+                            <div id="lbl_zone3_lchlevel_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_rchlevel" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone3_rchlevel"><select id="zone3_rchlevel_value"></select></div>
+                            <div id="lbl_zone3_rchlevel_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_channel" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone3_channel"><select id="zone3_channel_value"></select></div>
+                            <div id="lbl_zone3_channel_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_volumelevel" class="name_item"></div></td>
+                        <td><div id="lst_zone3_volumelevel"><select id="zone3_volumelevel_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_volumelimit" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone3_volumelimit"><select id="zone3_volumelimit_value"></select></div>
+                            <div id="lbl_zone3_volumelimit_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_poweronvolume" class="name_item"></div></td>
+                        <td>
+                            <div id="lst_zone3_poweronvolume"><select id="zone3_poweronvolume_value"></select></div>
+                            <div id="lbl_zone3_poweronvolume_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_zone3_mutelevel" class="name_item"></div></td>
+                        <td><div id="lst_zone3_mutelevel"><select id="zone3_mutelevel_value"></select></div></td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_zone_rename">
+                <table id="zone_rename_table">
+                </table>
+            </div>
+            <div id="func_quickselect_names">
+                <table id="quickselect_names_table">
+                </table>
+            </div>
+            <div id="func_quickselect_options">
+            </div>
+            <div id="func_triggerout1">
+                <table id="table_triggerout_1"></table>
+            </div>
+            <div id="func_triggerout2">
+                <table id="table_triggerout_2"></table>
+            </div>
+            <div id="func_triggerout3">
+                <table id="table_triggerout_3"></table>
+            </div>
+            <div id="func_avp_auto_standby">
+                <table>
+                    <tr>
+                        <td>
+                            <div id="lbl_title_avp_auto_standby" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_avp_auto_standby_single_zone">
+                                <select id="avp_avp_auto_standby_single_zone_value"></select>
+                            </div>
+                            <div id="lbl_avp_auto_standby_single_zone_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_avp_auto_standby_main_zone" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_avp_auto_standby_main_zone">
+                                <select id="avp_auto_standby_main_zone_value"></select>
+                            </div>
+                            <div id="lbl_avp_auto_standby_main_zone_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_avp_auto_standby_zone2" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_avp_auto_standby_zone2">
+                                <select id="avp_auto_standby_zone2_value"></select>
+                            </div>
+                            <div id="lbl_avp_auto_standby_zone2_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_avp_auto_standby_zone3" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_avp_auto_standby_zone3">
+                                <select id="avp_auto_standby_zone3_value"></select>
+                            </div>
+                            <div id="lbl_avp_auto_standby_zone3_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_front_display">
+                <table>
+                    <tr>
+                        <td>
+                            <div id="lbl_dimmer" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_dimmer"><select id="dimmer_value"></select></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div id="lbl_channel" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_channel"><select id="channel_value"></select></div>
+                        </td>
+                    </tr>
+                </table>                
+            </div>
+            <div id="func_front_panel">
+                <table>
+                    <tr>
+                        <td><div id="lbl_displays" class="name_item"></div></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_displaysbrightness" class="name_item"></div></td>
+                        <td><div id="lst_displaysbrightness"><select id="displaysbrightness_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_displayschannel" class="name_item"></div></td>
+                        <td><div id="lst_displayschannel"><select id="displayschannel_value"></select></div></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_illumination" class="name_item"></div></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td><div id="lbl_illuminationbrightness" class="name_item"></div></td>
+                        <td><div id="lst_illuminationbrightness"><select id="illuminationbrightness_value"></select></div></td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_firmware">
+                <div id="func_update">
+                    <h2 id="update_subject"></h2>
+                    <table id="update_check">
+                    </table>                
+                    <table id="update_item">
+                    </table>                
+                    <table id="update_attribute">
+                        <tr>
+                            <td><div id="lbl_firmware_update" class="name_item"></div></td>
+                            <td><div id="lbl_firmware_update_value" class="name_item"></div></td>
+                        </tr>
+                        <tr>
+                            <td><div id="lbl_estimated_time" class="name_item"></div></td>
+                            <td><div id="lbl_estimated_time_value" class="name_item"></div></td>
+                        </tr>
+                    </table>                
+                    <table id="update_start">
+                    </table>                
+                    <table id="update_execute">
+                    </table>                
+                </div>
+                <div id="func_auto_update">
+                    <h2 id="auto_update_subject"></h2>
+                    <table>
+                        <tr>
+                            <td><div id="lbl_auto_update" class="name_item"></div></td>
+                            <td><div id="lst_auto_update"><select id="auto_update_enable"></select></div></td>
+                        </tr>
+                        <tr>
+                            <td><div id="lbl_time_zone" class="name_item"></div></td>
+                            <td><div id="lst_time_zone"><select id="time_zone_value"></select></div></td>
+                        </tr>
+                    </table>                
+                </div>
+                <div id="func_allow_update">
+                    <h2 id="allow_update_subject"></h2>
+                    <table>
+                        <tr>
+                            <td><div id="lbl_allow_update" class="name_item"></div></td>
+                            <td>
+                                <div id="lst_allow_update"><select id="allow_update_enable"></select></div>
+                                <div id="lbl_allow_update_value" class="name_item"></div>
+                            </td>
+                        </tr>
+                    </table>                
+                </div>
+                <div id="func_upgrade_notification">
+                    <h2 id="upgrade_notification_subject"></h2>
+                    <table>
+                        <tr>
+                            <td><div id="lbl_upgrade_notification" class="name_item"></div></td>
+                            <td><div id="lst_upgrade_notification"><select id="upgrade_notification_enable"></select></div></td>
+                        </tr>
+                    </table>                
+                </div>    
+            </div>
+            <div id="func_information">
+                <div id="func_information_audio">
+                </div>
+                <div id="func_information_video">
+                </div>
+                    <div id="func_information_zone">
+                        <div id="func_information_mainzone">
+                        </div>
+                        <div id="func_information_zone2">
+                        </div>
+                        <div id="func_information_zone3">
+                        </div>
+                    </div>
+                <div id="func_information_status">
+                </div>
+                <div id="func_information_firmware">
+                </div>
+                <div id="func_information_notifications">
+                    <div id="lbl_notifications">
+                    </div>
+                    <table>
+                            <tr>
+                                <td><div id="lbl_notifications_alerts"></div></td>
+                                <td><div id="lst_notifications_alerts"><select id="notifications_alerts_value"></select></div></td>
+                            </tr>
+                    </table>
+                    <table>
+                            <tr>
+                                <td><div id="lbl_notifications_title"></div></td>
+                            </tr>
+                            <tr>
+                                <td><div id="lbl_notifications_message"></div></td>
+                            </tr>
+                    </table>
+                </div>
+            </div>
+            <div id="func_remote_id">
+            </div>
+            <div id="func_usage_data">
+                <div id="description_usage_data" class="name_item"></div>
+                <br>
+                <table>
+                    <tr>
+                        <td>
+                            <div id="lbl_usage_data" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_usage_data"><select id="usage_data_value"></select></div>
+                            <div id="lbl_usage_data_value" class="name_item"></div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <div id="func_setuplock">
+                <table>
+                    <tr>
+                        <td>
+                            <div id="lbl_setuplock" class="name_item"></div>
+                        </td>
+                        <td>
+                            <div id="lst_setuplock"><select id="setuplock"></select></div>
+                        </td>
+                    </tr>
+                </table>                
+            </div>
+            <div id="func_reset">
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,77 @@
+﻿URL=https://192.168.0.128:10443/ajax/general/get_config?type=12&_=1784100570451
+PowerShellVersion=5.1.26100.8655
+User=timmeh
+
+[Direct curl]
+ExitCode=0
+OutputBytes=1852
+Stderr:
+curl.exe :   % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+At C:\RainmeterDenon\Development\DecoderTransportDiagnostic.ps1:27 char:5
++     & $curl -k -v --connect-timeout 5 --max-time 10 -o $curlOut $url  ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  % Total    % ... Time   Current:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0*   Trying 192.168.0.128:10443...
+* schannel: disabled automatic use of client certificate
+* schannel: using IP address, SNI is not supported by OS.
+* ALPN: curl offers http/1.1
+* ALPN: server did not agree on a protocol. Uses default.
+* Established connection to 192.168.0.128 (192.168.0.128 port 10443) from 192.168.0.44 port 65104 
+* using HTTP/1.x
+> GET /ajax/general/get_config?type=12&_=1784100570451 HTTP/1.1
+
+> Host: 192.168.0.128:10443
+
+> User-Agent: curl/8.19.0
+
+> Accept: */*
+
+> 
+
+* Request completely sent off
+
+  0      0   0      0   0      0      0      0           00:01              0
+  0      0   0      0   0      0      0      0           00:02              0
+  0      0   0      0   0      0      0      0           00:03              0* schannel: remote party requests 
+renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+* schannel: remote party requests renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+
+  0      0   0      0   0      0      0      0           00:05              0
+  0      0   0      0   0      0      0      0           00:06              0
+  0      0   0      0   0      0      0      0           00:07              0< HTTP/1.1 200 OK
+
+< Server: Boost.Beast/347
+
+< Content-Type: application/x-javascript
+
+< Content-Length: 1852
+
+< 
+
+{ [1852 bytes data]
+
+100   1852 100   1852   0      0    243      0   00:07   00:07            326
+100   1852 100   1852   0      0    243      0   00:07   00:07            326
+100   1852 100   1852   0      0    243      0   00:07   00:07            326
+* Connection #0 to host 192.168.0.128:10443 left intact
+
+[cmd.exe curl]
+ExitCode=1
+OutputBytes=0
+
+[Invoke-WebRequest]
+Exception=The underlying connection was closed: An unexpected error occurred on a send.
+
+[Parsed decoder_curl_output.xml]
+SoundMode=Dolby Atmos
+InputSignal=Dolby Atmos - DD+
+SampleRate=48 kHz
+

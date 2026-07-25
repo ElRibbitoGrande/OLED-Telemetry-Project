@@ -1,0 +1,811 @@
+﻿[Metadata]
+Skin name=DESKTOP VU-METER 3 - Analog Floating AVR Telemetry + Format Logos
+Version=5.0 Analog Floating AVR Edition
+Information=Adaptive AVR VU Meter - Analog_Floating artwork, image needle, Denon audio telemetry strip
+Author=HiTBiT-PA + ChatGPT
+
+[Rainmeter]
+Update=32
+AccurateText=1
+DynamicWindowSize=1
+BackgroundMode=2
+SolidColor=0,0,0,1
+
+KeepOnScreen=1
+Draggable=1
+ClickThrough=0
+
+[Variables]
+@include=#@#Variables.inc
+
+vRMSAttack=85
+vRMSDecay=520
+vRMSGain=2.7
+
+TelemetryLabelColor=145,175,215,210
+TelemetryValueColor=225,232,255,235
+TelemetryDimColor=115,135,170,190
+TelemetryLineColor=90,120,170,130
+TelemetryPanelColor=0,0,0,95
+
+; =====================================================
+; DENON / NOW PLAYING STATUS FILE PARSING
+; =====================================================
+
+[MeasureStatusFile]
+Measure=WebParser
+URL=file://C:\RainmeterDenon\denon_status.txt
+RegExp=(?s)Volume=([^\r\n]*).*Source=([^\r\n]*).*Mode=([^\r\n]*).*VisualMode=([^\r\n]*).*VisualModeCode=([01]).*InputSignal=([^\r\n]*).*SampleRate=([^\r\n]*).*SpeakerPreset=([^\r\n]*).*MultEQ=([^\r\n]*).*DynamicEQ=([^\r\n]*).*ReferenceLevelOffset=([^\r\n]*).*DynamicVolume=([^\r\n]*)
+UpdateRate=1
+DynamicVariables=1
+
+[MeasureVolumeRelative]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=1
+DynamicVariables=1
+
+[MeasureVolumeAbsolute]
+Measure=Calc
+Formula=MeasureVolumeRelative + 80
+DynamicVariables=1
+
+[MeasureSource]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=2
+DynamicVariables=1
+
+[MeasureMode]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=3
+DynamicVariables=1
+
+[MeasureVisualMode]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=4
+DynamicVariables=1
+
+[MeasureVisualModeCode]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=5
+DynamicVariables=1
+IfMatch=1
+IfMatchAction=[!HideMeterGroup Stereo][!ShowMeterGroup Atmos][!HideMeterGroup DTS][!UpdateMeterGroup Stereo][!UpdateMeterGroup Atmos][!UpdateMeterGroup DTS][!Redraw]
+IfNotMatchAction=[!ShowMeterGroup Stereo][!HideMeterGroup Atmos][!HideMeterGroup DTS][!UpdateMeterGroup Stereo][!UpdateMeterGroup Atmos][!UpdateMeterGroup DTS][!Redraw]
+
+[MeasureDTSModeOverride]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=3
+DynamicVariables=1
+IfMatch=(?i)(DTS:X|NEURAL)
+IfMatchAction=[!HideMeterGroup Stereo][!HideMeterGroup Atmos][!ShowMeterGroup DTS][!UpdateMeterGroup DTS][!Redraw]
+IfNotMatchAction=[!HideMeterGroup DTS][!ShowMeterGroup Stereo][!HideMeterGroup Atmos][!UpdateMeterGroup Stereo][!Redraw]
+
+[MeasureInputSignal]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=6
+DynamicVariables=1
+
+[MeasureSampleRate]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=7
+DynamicVariables=1
+
+[MeasureSpeakerPreset]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=8
+DynamicVariables=1
+
+[MeasureMultEQ]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=9
+DynamicVariables=1
+
+[MeasureDynamicEQ]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=10
+DynamicVariables=1
+
+[MeasureReferenceLevelOffset]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=11
+DynamicVariables=1
+
+[MeasureDynamicVolume]
+Measure=WebParser
+URL=[MeasureStatusFile]
+StringIndex=12
+DynamicVariables=1
+
+
+[MeasureMusicStatusFile]
+Measure=WebParser
+URL=file://C:\RainmeterDenon\NowPlaying\now_playing.txt
+RegExp=(?s)Active=([01]).*Source=([^\r\n]*).*Title=([^\r\n]*).*Artist=([^\r\n]*).*Album=([^\r\n]*).*PositionSeconds=([^\r\n]*).*DurationSeconds=([^\r\n]*).*Position=([^\r\n]*).*Duration=([^\r\n]*).*Progress=([^\r\n]*).*ArtworkAvailable=([01]).*Artwork=([^\r\n]*)
+UpdateRate=1
+DynamicVariables=1
+
+[MeasureMusicActive]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=1
+IfMatch=1
+IfMatchAction=[!ShowMeterGroup NowPlaying][!UpdateMeterGroup NowPlaying][!Redraw]
+IfNotMatchAction=[!HideMeterGroup NowPlaying][!UpdateMeterGroup NowPlaying][!Redraw]
+DynamicVariables=1
+
+[MeasureMusicSource]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=2
+DynamicVariables=1
+
+[MeasureMusicTitle]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=3
+DynamicVariables=1
+
+[MeasureMusicArtist]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=4
+DynamicVariables=1
+
+[MeasureMusicAlbum]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=5
+DynamicVariables=1
+
+[MeasureMusicPositionSeconds]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=6
+DynamicVariables=1
+
+[MeasureMusicDurationSeconds]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=7
+DynamicVariables=1
+
+[MeasureMusicPosition]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=8
+DynamicVariables=1
+
+[MeasureMusicDuration]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=9
+DynamicVariables=1
+
+[MeasureMusicProgress]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=10
+MinValue=0
+MaxValue=100
+DynamicVariables=1
+
+[MeasureMusicArtworkAvailable]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=11
+DynamicVariables=1
+
+[MeasureMusicArtwork]
+Measure=WebParser
+URL=[MeasureMusicStatusFile]
+StringIndex=12
+DynamicVariables=1
+
+[MeasureMusicQuality]
+Measure=String
+String=Apple Music
+
+[MeasureMusicSampleRate]
+Measure=String
+String=
+
+; =====================================================
+; AUDIO MEASURES
+; =====================================================
+
+[MeasureAudioOutput]
+Measure=Plugin
+Plugin=AudioLevel
+Port=Output
+RMSAttack=#vRMSAttack#
+RMSDecay=#vRMSDecay#
+RMSGain=#vRMSGain#
+
+[MeasureAudioRMS_L]
+Measure=Plugin
+Plugin=AudioLevel
+Parent=MeasureAudioOutput
+Channel=L
+Type=RMS
+
+[MeasureAudioRMS_R]
+Measure=Plugin
+Plugin=AudioLevel
+Parent=MeasureAudioOutput
+Channel=R
+Type=RMS
+
+; =====================================================
+; STEREO MODE — ANALOG5 DUAL METERS
+; Needle origins intentionally moved downward to the
+; center of the black oval at the bottom of each meter.
+; =====================================================
+
+[VU-Meter1]
+Meter=Image
+Group=Stereo
+Hidden=0
+X=55
+Y=12
+W=620
+H=372
+ImageName=#@#Images\analog\Analog_Floating.png
+PreserveAspectRatio=1
+AntiAlias=1
+
+[VU-Meter2]
+Meter=Image
+Group=Stereo
+Hidden=0
+X=875
+Y=12
+W=620
+H=372
+ImageName=#@#Images\analog\Analog_Floating.png
+PreserveAspectRatio=1
+AntiAlias=1
+
+; =====================================================
+; IMAGE NEEDLES
+; Uses Analog_Needle.png as a Rotator meter.
+; These values are starting points for the new 750x450
+; Analog_Floating art. The pivot should sit on the cap.
+; Fine tune X/Y by a few pixels after loading.
+; =====================================================
+
+[MeterAudioRMS_L] 
+Meter=Rotator 
+Group=Stereo 
+Hidden=0 
+MeasureName=MeasureAudioRMS_L 
+ImageName=#@#Images\analog\Floating_Needle.png 
+X=357 
+Y=186 
+W=25 
+H=248 
+OffsetX=18 
+OffsetY=243 
+StartAngle=11.5 
+RotationAngle=2.1 
+AntiAlias=1 
+
+[MeterAudioRMS_Shadow_L] 
+Meter=Rotator 
+Group=Stereo 
+Hidden=0 
+MeasureName=MeasureAudioRMS_L 
+ImageName=#@#Images\analog\Floating_Needle.png 
+X=354 
+Y=183 
+W=25 
+H=248 
+OffsetX=18 
+OffsetY=243 
+StartAngle=11.5 
+RotationAngle=2.1 
+AntiAlias=1  
+ImageTint=0,0,0,50 
+
+[MeterAudioRMS_R]
+Meter=Rotator
+Group=Stereo
+Hidden=0
+MeasureName=MeasureAudioRMS_R
+ImageName=#@#Images\analog\Floating_Needle.png
+X=1177
+Y=186
+W=25
+H=248
+OffsetX=18
+OffsetY=243
+StartAngle=11.5
+RotationAngle=2.1
+AntiAlias=1
+
+[MeterAudioRMS_Shadow_R]
+Meter=Rotator
+Group=Stereo
+Hidden=0
+MeasureName=MeasureAudioRMS_R
+ImageName=#@#Images\analog\Floating_Needle.png
+X=1174
+Y=183
+W=25
+H=248
+OffsetX=18
+OffsetY=243
+StartAngle=11.5
+RotationAngle=2.1
+ImageTint=0,0,0,50
+AntiAlias=1
+
+; =====================================================
+; IMMERSIVE FORMAT LOGOS
+; Atmos uses Atmos_Logo_2_Black.png.
+; DTS:X / Neural:X uses DTSX_Logo_b_Starfield.png.
+; Place both image files in:
+;   @Resources\Images\formats\
+; =====================================================
+
+[AtmosLogo]
+Meter=Image
+Group=Atmos
+Hidden=1
+X=355
+Y=25
+W=840
+H=472
+ImageName=#@#Images\analog\Atmos_Logo_2_Black.png
+PreserveAspectRatio=1
+AntiAlias=1
+
+[DTSXLogo]
+Meter=Image
+Group=DTS
+Hidden=1
+X=405
+Y=70
+W=740
+H=416
+ImageName=#@#Images\analog\DTSX_Logo_b_Starfield.png
+PreserveAspectRatio=1
+AntiAlias=1
+
+
+; =====================================================
+; V2 CENTER VOLUME
+; =====================================================
+
+[CenterVolumeGlow]
+Meter=String
+MeasureName=MeasureVolumeAbsolute
+Text=%1
+DynamicVariables=1
+X=775
+Y=238
+W=520
+H=112
+FontFace=Bahnschrift SemiBold
+FontSize=84
+FontColor=255,240,220,28
+StringAlign=Center
+AntiAlias=1
+
+[CenterVolume]
+Meter=String
+MeasureName=MeasureVolumeAbsolute
+Text=%1
+DynamicVariables=1
+X=775
+Y=238
+W=520
+H=112
+FontFace=Bahnschrift SemiBold
+FontSize=80
+FontColor=#TelemetryValueColor#
+StringAlign=Center
+AntiAlias=1
+
+[CenterVolumeLabel]
+Meter=String
+Text=VOLUME
+X=775
+Y=333
+FontFace=Bahnschrift SemiBold
+FontSize=20
+FontColor=#TelemetryValueColor#
+StringAlign=Center
+AntiAlias=1
+
+; =====================================================
+; V2 AVR TELEMETRY PANEL
+; =====================================================
+
+[TelemetryPanel]
+Meter=Shape
+X=0
+Y=405
+Shape=Rectangle 0,0,1550,220,22 | Fill Color #TelemetryPanelColor# | StrokeWidth 1 | Stroke Color #TelemetryLineColor#
+Shape2=Rectangle 24,92,1502,1 | Fill Color #TelemetryLineColor# | StrokeWidth 0
+Shape3=Rectangle 420,108,1,76 | Fill Color #TelemetryLineColor# | StrokeWidth 0
+Shape4=Rectangle 690,108,1,76 | Fill Color #TelemetryLineColor# | StrokeWidth 0
+Shape5=Rectangle 1080,108,1,76 | Fill Color #TelemetryLineColor# | StrokeWidth 0
+Shape6=Rectangle 1315,108,1,76 | Fill Color #TelemetryLineColor# | StrokeWidth 0
+AntiAlias=1
+
+[TelemetrySignalLabel]
+Meter=String
+Text=FORMAT
+X=75
+Y=420
+FontFace=Bahnschrift SemiBold
+FontSize=23
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetrySignalValue]
+Meter=String
+MeasureName=MeasureInputSignal
+Text=[MeasureInputSignal]
+DynamicVariables=1
+X=75
+Y=452
+W=370
+H=62
+ClipString=1
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryModeLabel]
+Meter=String
+Text=LISTENING MODE
+X=775
+Y=420
+FontFace=Bahnschrift SemiBold
+FontSize=23
+FontColor=#TelemetryLabelColor#
+StringAlign=Center
+AntiAlias=1
+
+[TelemetryModeValue]
+Meter=String
+MeasureName=MeasureMode
+Text=[MeasureMode]
+DynamicVariables=1
+X=775
+Y=449
+W=780
+H=64
+ClipString=1
+FontFace=Bahnschrift SemiBold
+FontSize=40
+FontColor=#TelemetryValueColor#
+StringAlign=Center
+AntiAlias=1
+
+[TelemetrySourceLabel]
+Meter=String
+Text=SOURCE
+X=1475
+Y=420
+FontFace=Bahnschrift SemiBold
+FontSize=23
+FontColor=#TelemetryLabelColor#
+StringAlign=Right
+AntiAlias=1
+
+[TelemetrySourceValue]
+Meter=String
+MeasureName=MeasureSource
+Text=[MeasureSource]
+StringCase=Upper
+DynamicVariables=1
+X=1475
+Y=452
+W=220
+H=62
+ClipString=1
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Right
+AntiAlias=1
+
+[ChannelsLabel]
+Meter=String
+Text=CHANNELS IN -> OUT
+X=45
+Y=510
+FontFace=Bahnschrift SemiBold
+FontSize=20
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[ChannelsValue]
+Meter=String
+Text=-- -> --
+DynamicVariables=1
+X=45
+Y=548
+W=380
+H=55
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryRateLabel]
+Meter=String
+Text=SAMPLE RATE
+X=475
+Y=510
+FontFace=Bahnschrift SemiBold
+FontSize=20
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryRateValue]
+Meter=String
+MeasureName=MeasureSampleRate
+Text=[MeasureSampleRate]
+DynamicVariables=1
+X=475
+Y=548
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryMultEQLabel]
+Meter=String
+Text=MULTEQ
+X=740
+Y=510
+FontFace=Bahnschrift SemiBold
+FontSize=20
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryMultEQValue]
+Meter=String
+MeasureName=MeasureMultEQ
+Text=[MeasureMultEQ]
+DynamicVariables=1
+X=740
+Y=548
+W=340
+H=55
+ClipString=1
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryDynEQLabel]
+Meter=String
+Text=DYN EQ
+X=1125
+Y=510
+FontFace=Bahnschrift SemiBold
+FontSize=20
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryDynEQValue]
+Meter=String
+MeasureName=MeasureDynamicEQ
+Text=[MeasureDynamicEQ]
+DynamicVariables=1
+X=1125
+Y=548
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryRLOLabel]
+Meter=String
+Text=RLO
+X=1360
+Y=510
+FontFace=Bahnschrift SemiBold
+FontSize=20
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[TelemetryRLOValue]
+Meter=String
+MeasureName=MeasureReferenceLevelOffset
+Text=[MeasureReferenceLevelOffset]
+DynamicVariables=1
+X=1360
+Y=548
+FontFace=Bahnschrift SemiBold
+FontSize=31
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+; =====================================================
+; NOW PLAYING PANEL — hidden until MusicActive=1
+; =====================================================
+
+[NowPlayingPanel]
+Meter=Shape
+Group=NowPlaying
+Hidden=1
+X=0
+Y=635
+Shape=Rectangle 0,0,1550,290,22 | Fill Color #TelemetryPanelColor# | StrokeWidth 1 | Stroke Color #TelemetryLineColor#
+Shape2=Rectangle 740,24,1,242 | Fill Color #TelemetryLineColor# | StrokeWidth 0
+AntiAlias=1
+
+[NowPlayingArtwork]
+Meter=Image
+Group=NowPlaying
+Hidden=1
+ImageName=[MeasureMusicArtwork]
+DynamicVariables=1
+X=28
+Y=653
+W=245
+H=245
+PreserveAspectRatio=2
+AntiAlias=1
+
+[NowPlayingTitle]
+Meter=String
+Group=NowPlaying
+Hidden=1
+MeasureName=MeasureMusicTitle
+Text=[MeasureMusicTitle]
+DynamicVariables=1
+X=305
+Y=663
+W=420
+H=44
+ClipString=1
+FontFace=Bahnschrift SemiBold
+FontSize=30
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingArtist]
+Meter=String
+Group=NowPlaying
+Hidden=1
+MeasureName=MeasureMusicArtist
+Text=[MeasureMusicArtist]
+DynamicVariables=1
+X=305
+Y=727
+W=420
+H=40
+ClipString=1
+FontFace=Bahnschrift SemiBold
+FontSize=24
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingAlbum]
+Meter=String
+Group=NowPlaying
+Hidden=1
+MeasureName=MeasureMusicAlbum
+Text=[MeasureMusicAlbum]
+DynamicVariables=1
+X=305
+Y=785
+W=420
+H=40
+ClipString=1
+FontFace=Bahnschrift Light
+FontSize=20
+FontColor=#TelemetryDimColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingService]
+Meter=String
+Group=NowPlaying
+Hidden=1
+Text=APPLE MUSIC
+X=805
+Y=669
+FontFace=Bahnschrift SemiBold
+FontSize=28
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingQuality]
+Meter=String
+Group=NowPlaying
+Hidden=1
+Text=Apple Music
+DynamicVariables=1
+X=805
+Y=731
+FontFace=Bahnschrift SemiBold
+FontSize=23
+FontColor=#TelemetryLabelColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingMusicRate]
+Meter=String
+Group=NowPlaying
+Hidden=1
+Text=[MeasureMusicSampleRate]
+DynamicVariables=1
+X=805
+Y=789
+FontFace=Bahnschrift Light
+FontSize=20
+FontColor=#TelemetryDimColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingTime]
+Meter=String
+Group=NowPlaying
+Hidden=1
+Text=[MeasureMusicPosition] / [MeasureMusicDuration]
+DynamicVariables=1
+X=1065
+Y=704
+FontFace=Bahnschrift SemiBold
+FontSize=25
+FontColor=#TelemetryValueColor#
+StringAlign=Left
+AntiAlias=1
+
+[NowPlayingProgressBackground]
+Meter=Shape
+Group=NowPlaying
+Hidden=1
+X=1065
+Y=780
+Shape=Rectangle 0,0,410,12,6 | Fill Color 70,85,120,130 | StrokeWidth 0
+AntiAlias=1
+
+[NowPlayingProgress]
+Meter=Bar
+Group=NowPlaying
+Hidden=1
+MeasureName=MeasureMusicProgress
+X=1065
+Y=780
+W=430
+H=12
+BarOrientation=Horizontal
+BarColor=225,232,255,220
+SolidColor=0,0,0,1
+DynamicVariables=1
