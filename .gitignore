@@ -1,48 +1,24 @@
-# Private ChatGPT conversation archives
-docs/chat-archive/
-docs/private/
+﻿# OLED Telemetry runtime output
 
-# Diagnostic output and runtime state
-diagnostics/
+# Logs
 *.log
-*.tmp
-*.lock
-*.pid
 
-# Generated telemetry data
-nowplaying.json
-telemetry.json
-denon_status.json
-wiim_status.json
-status.json
+# Heartbeats and generated status
+decoder_heartbeat.txt
+decoder_status.txt
+denon_heartbeat.txt
+denon_status.txt
+telemetry_manager_status.txt
+NowPlaying/now_playing.txt
 
-# Generated or cached artwork
-cache/
-artwork-cache/
-album-art/
-current-art.*
+# Temporary receiver responses
+decoder_response.xml
+decoder_curl_error.txt
 
-# Secrets and private configuration
-.env
-.env.*
-*.key
-*.pem
-*.pfx
-*.p12
-credentials.json
-secrets.json
-config.private.json
+# Generated artwork
+NowPlaying/artwork_a.jpg
+NowPlaying/artwork_b.jpg
+NowPlaying/wiim_artwork.jpg
 
-# Backups and temporary copies
-*.bak
-*.old
-*~
-*-backup.*
-*-before.*
-*-test.*
-
-# Windows/editor files
-Thumbs.db
-Desktop.ini
-.vscode/
-.idea/
+# Collector logs
+NowPlaying/apple_music_collector.log
