@@ -16,8 +16,46 @@ $ErrorActionPreference = "Continue"
 $AppleQuickSelects = @("1", "2")
 $WiiMQuickSelects  = @("3", "4")
 
+$RouterDirectory = Split-Path -Parent $NowPlayingPath
+$RouterHeartbeatPath = Join-Path $RouterDirectory "router_heartbeat.txt"
+$RouterLogPath = Join-Path $RouterDirectory "router.log"
+$RouterLogMaxBytes = 64KB
+$RouterLogRetainedCharacters = 32KB
+$RouterHeartbeatIntervalSeconds = 5
+
 $script:ActiveMode = ""
 $script:ChildProcess = $null
+$script:NextHeartbeat = Get-Date
+
+function Write-RouterLog {
+    param([Parameter(Mandatory)][string]$Message)
+
+    try {
+        New-Item -ItemType Directory -Path $RouterDirectory -Force | Out-Null
+
+        if ((Test-Path -LiteralPath $RouterLogPath) -and
+            (Get-Item -LiteralPath $RouterLogPath).Length -ge $RouterLogMaxBytes) {
+
+            $existing = [IO.File]::ReadAllText($RouterLogPath)
+            if ($existing.Length -gt $RouterLogRetainedCharacters) {
+                $existing = $existing.Substring($existing.Length - $RouterLogRetainedCharacters)
+            }
+            [IO.File]::WriteAllText($RouterLogPath, $existing, [Text.UTF8Encoding]::new($false))
+        }
+
+        Add-Content -LiteralPath $RouterLogPath `
+            -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $Message) `
+            -Encoding UTF8
+    }
+    catch {}
+}
+
+function Write-RouterHeartbeat {
+    try {
+        Set-Content -LiteralPath $RouterHeartbeatPath -Value (Get-Date -Format "o") -Encoding ASCII
+    }
+    catch {}
+}
 
 function Get-DenonState {
     $state = @{
@@ -64,6 +102,7 @@ function Stop-MatchingCollector {
         try {
             Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
             Write-Host "$(Get-Date -Format HH:mm:ss) Stopped PID $($process.ProcessId): $([IO.Path]::GetFileName($ScriptPath))"
+            Write-RouterLog "Stopped PID $($process.ProcessId): $([IO.Path]::GetFileName($ScriptPath))."
         }
         catch {
             Write-Warning "Could not stop PID $($process.ProcessId): $($_.Exception.Message)"
@@ -77,6 +116,7 @@ function Stop-CurrentCollector {
             if (-not $script:ChildProcess.HasExited) {
                 Stop-Process -Id $script:ChildProcess.Id -Force -ErrorAction Stop
                 Write-Host "$(Get-Date -Format HH:mm:ss) Stopped $($script:ActiveMode) collector."
+                Write-RouterLog "Stopped $($script:ActiveMode) collector PID $($script:ChildProcess.Id)."
             }
         }
         catch {
@@ -115,9 +155,11 @@ function Start-Collector {
 
         $script:ActiveMode = $Mode
         Write-Host "$(Get-Date -Format HH:mm:ss) Started $Mode collector (PID $($script:ChildProcess.Id))."
+        Write-RouterLog "Started $Mode collector PID $($script:ChildProcess.Id)."
     }
     catch {
         Write-Warning "Could not start $Mode collector: $($_.Exception.Message)"
+        Write-RouterLog "Failed to start $Mode collector: $($_.Exception.Message)"
         $script:ChildProcess = $null
         $script:ActiveMode = ""
     }
@@ -158,8 +200,23 @@ function Set-Mode {
         ($null -ne $script:ChildProcess) -and
         (-not $script:ChildProcess.HasExited)
 
+    if (($null -ne $script:ChildProcess) -and
+        $script:ChildProcess.HasExited -and
+        $script:ActiveMode -in @("Apple", "WiiM")) {
+
+        Write-RouterLog "Unexpected $($script:ActiveMode) collector exit; PID $($script:ChildProcess.Id), exit code $($script:ChildProcess.ExitCode)."
+    }
+
     if (($Mode -eq $script:ActiveMode) -and (($Mode -eq "None") -or $collectorHealthy)) {
         return
+    }
+
+    if ($Mode -eq $script:ActiveMode) {
+        Write-RouterLog "Restart decision: $Mode collector is not running."
+    }
+    else {
+        $previousMode = if ([string]::IsNullOrWhiteSpace($script:ActiveMode)) { "None" } else { $script:ActiveMode }
+        Write-RouterLog "Collector change: $previousMode -> $Mode."
     }
 
     Stop-CurrentCollector
@@ -171,9 +228,15 @@ function Set-Mode {
             Write-InactiveNowPlaying
             $script:ActiveMode = "None"
             Write-Host "$(Get-Date -Format HH:mm:ss) Now Playing hidden (Quick Select $($State.QuickSelect): $($State.QuickSelectName))."
+            Write-RouterLog "Now Playing hidden for Quick Select $($State.QuickSelect) ($($State.QuickSelectName))."
         }
     }
 }
+
+New-Item -ItemType Directory -Path $RouterDirectory -Force | Out-Null
+Write-RouterLog "Now Playing Router started. PID=$PID."
+Write-RouterHeartbeat
+$script:NextHeartbeat = (Get-Date).AddSeconds($RouterHeartbeatIntervalSeconds)
 
 # Take ownership of now_playing.txt.
 Stop-MatchingCollector -ScriptPath $AppleCollectorPath
@@ -190,6 +253,11 @@ $lastSignature = ""
 
 try {
     while ($true) {
+        if ((Get-Date) -ge $script:NextHeartbeat) {
+            Write-RouterHeartbeat
+            $script:NextHeartbeat = (Get-Date).AddSeconds($RouterHeartbeatIntervalSeconds)
+        }
+
         $state = Get-DenonState
         $quickSelect = [string]$state.QuickSelect
 
@@ -214,5 +282,7 @@ try {
     }
 }
 finally {
+    Write-RouterLog "Now Playing Router shutting down. PID=$PID."
     Stop-CurrentCollector
+    Write-RouterLog "Now Playing Router stopped. PID=$PID."
 }

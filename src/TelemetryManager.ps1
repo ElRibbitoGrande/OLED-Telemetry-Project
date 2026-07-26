@@ -10,7 +10,9 @@ $DecoderScript = Join-Path $Root 'DecoderCollector.ps1'
 
 $DenonHeartbeat = Join-Path $Root 'denon_heartbeat.txt'
 $NowPlayingState = Join-Path $NowPlaying 'now_playing.txt'
+$RouterHeartbeat = Join-Path $NowPlaying 'router_heartbeat.txt'
 $DecoderHeartbeat = Join-Path $Root 'decoder_heartbeat.txt'
+$routerHeartbeatStaleLogged = $false
 
 $createdNew = $false
 $mutex = [Threading.Mutex]::new($true, 'Local\RainmeterDenonTelemetryManager', [ref]$createdNew)
@@ -133,6 +135,19 @@ try {
             (AgeSeconds $DecoderHeartbeat) -gt 30) {
             Log 'Decoder heartbeat stale; restarting collector.'
             Stop-Collector 'DecoderCollector\.ps1'
+        }
+
+        if ((Test-Path -LiteralPath $RouterHeartbeat) -and
+            (Find-Collector 'NowPlayingRouter\.ps1').Count -eq 1 -and
+            (AgeSeconds $RouterHeartbeat) -gt 12) {
+
+            if (-not $routerHeartbeatStaleLogged) {
+                Log 'Now Playing router heartbeat stale; logging only.'
+                $routerHeartbeatStaleLogged = $true
+            }
+        }
+        else {
+            $routerHeartbeatStaleLogged = $false
         }
 
         Write-State
