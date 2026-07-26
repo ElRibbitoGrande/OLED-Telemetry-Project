@@ -34,3 +34,9 @@ docs/chat-archive/
 *.bak4
 *.old
 *.bak-*
+
+# Now Playing runtime output
+src/NowPlaying/now_playing.txt
+src/NowPlaying/artwork_a.jpg
+src/NowPlaying/artwork_b.jpg
+src/NowPlaying/wiim_artwork.jpg
