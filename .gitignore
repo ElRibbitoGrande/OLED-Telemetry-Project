@@ -22,3 +22,15 @@ NowPlaying/wiim_artwork.jpg
 
 # Collector logs
 NowPlaying/apple_music_collector.log
+
+# Local conversation archive
+docs/chat-archive/
+
+# Local editor and manual backup copies
+*.bak
+*.bak1
+*.bak2
+*.bak3
+*.bak4
+*.old
+*.bak-*
