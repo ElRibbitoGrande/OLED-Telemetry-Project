@@ -14,6 +14,7 @@ if (-not $createdNew) { exit 0 }
 # Fast-changing AVR events arrive over one persistent TCP connection.
 # Slower settings are refreshed from the Denon XML endpoints on separate schedules.
 $volumeQueryIntervalMs = 100
+$channelQueryIntervalMs = 1000
 $fastXmlIntervalMs = 750
 $audysseyIntervalMs = 5000
 $presetIntervalMs = 10000
@@ -29,6 +30,7 @@ $stream = $null
 $reader = $null
 $writer = $null
 $nextVolumeQuery = Get-Date
+$nextChannelQuery = Get-Date
 $nextFastXml = Get-Date
 $nextAudysseyXml = Get-Date
 $nextPresetXml = Get-Date
@@ -100,6 +102,10 @@ $state = [ordered]@{
     Mode = ""
     VisualMode = "STEREO"
     VisualModeCode = "0"
+    DisplayMode = "VU"
+    DisplayModeCode = 0
+    LevelSource = "NONE"
+    LevelSourceCode = 0
     InputSignal = ""
     SampleRate = ""
     SpeakerPreset = ""
@@ -107,7 +113,36 @@ $state = [ordered]@{
     DynamicEQ = ""
     ReferenceLevelOffset = ""
     DynamicVolume = "Off"
+    ActiveFHL = 0
+    ActiveFHR = 0
+    ActiveFL = 0
+    ActiveC = 0
+    ActiveFR = 0
+    ActiveSL = 0
+    ActiveSR = 0
+    ActiveTRL = 0
+    ActiveTRR = 0
+    ActiveSUB1 = 0
+    ActiveSUB2 = 0
 }
+
+$activeChannelStateKeys = [ordered]@{
+    FHL = "ActiveFHL"
+    FHR = "ActiveFHR"
+    FL = "ActiveFL"
+    C = "ActiveC"
+    FR = "ActiveFR"
+    SL = "ActiveSL"
+    SR = "ActiveSR"
+    TRL = "ActiveTRL"
+    TRR = "ActiveTRR"
+    SW = "ActiveSUB1"
+    SW2 = "ActiveSUB2"
+}
+$pendingActiveChannels = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::OrdinalIgnoreCase
+)
+$collectingActiveChannels = $false
 
 $lastVisualMode = "STEREO"
 $pendingVisualMode = ""
@@ -143,6 +178,7 @@ function Connect-Denon {
     $script:writer.WriteLine("SI?")
     $script:writer.WriteLine("MS?")
     $script:writer.WriteLine("MSQUICK ?")
+    $script:writer.WriteLine("CV?")
 }
 
 function Convert-DenonVolume($raw) {
@@ -228,6 +264,82 @@ function Format-ListeningMode($mode) {
     return $clean
 }
 
+function Normalize-Source($source) {
+    if ([string]::IsNullOrWhiteSpace([string]$source)) { return "" }
+
+    switch (([string]$source).Trim().ToUpperInvariant()) {
+        "CBL/SAT" { return "HTPC" }
+        "SAT/CBL" { return "HTPC" }
+        "PC"      { return "HTPC" }
+        "HTPC"    { return "HTPC" }
+        "GAME"    { return "LYR+" }
+        "LYR+"    { return "LYR+" }
+        "SCHIIT LYR+" { return "LYR+" }
+        "DVD"     { return "PS5" }
+        "PS5"     { return "PS5" }
+        "8K"      { return "XBOX" }
+        "XBOX"    { return "XBOX" }
+        "XBOX SERIES X" { return "XBOX" }
+        default   { return ([string]$source).Trim().ToUpperInvariant() }
+    }
+}
+
+function Update-PresentationState {
+    $source = Normalize-Source $script:state.Source
+    $script:state.Source = $source
+
+    $formatText = "{0} {1}" -f $script:state.InputSignal, $script:state.Mode
+    $formatDisplayMode = if ($formatText -match "DTS:X|NEURAL:X") {
+        "DTSX_LOGO"
+    }
+    elseif ($script:state.VisualMode -eq "ATMOS" -or $formatText -match "ATMOS") {
+        "ATMOS_LOGO"
+    }
+    else {
+        "VU"
+    }
+
+    switch ($source) {
+        "XBOX" {
+            # Input identity wins even when the console is currently outputting Atmos.
+            $script:state.DisplayMode = "XBOX_LOGO"
+            $script:state.LevelSource = "NONE"
+        }
+        "PS5" {
+            $script:state.DisplayMode = "PS5_LOGO"
+            $script:state.LevelSource = "NONE"
+        }
+        "HTPC" {
+            $script:state.DisplayMode = $formatDisplayMode
+            $script:state.LevelSource = if ($formatDisplayMode -eq "VU") { "PC_AUDIO" } else { "NONE" }
+        }
+        "LYR+" {
+            $script:state.DisplayMode = "VU"
+
+            # WiiM supplies metadata, not usable per-channel amplitude telemetry.
+            # The analog LYR+ path supplies no telemetry of its own. A future
+            # high-impedance RCA sensing PCB / ADC collector can integrate here by
+            # selecting ANALOG_ADC without changing metadata routing or display layout.
+            $script:state.LevelSource = "NONE"
+        }
+        default {
+            # Unknown inputs may retain recognized format logos, but never borrow
+            # PC audio levels or metadata from another source.
+            $script:state.DisplayMode = $formatDisplayMode
+            $script:state.LevelSource = "NONE"
+        }
+    }
+
+    $script:state.DisplayModeCode = switch ($script:state.DisplayMode) {
+        "ATMOS_LOGO" { 1 }
+        "DTSX_LOGO"  { 2 }
+        "XBOX_LOGO"  { 3 }
+        "PS5_LOGO"   { 4 }
+        default      { 0 }
+    }
+    $script:state.LevelSourceCode = if ($script:state.LevelSource -eq "PC_AUDIO") { 1 } else { 0 }
+}
+
 function Get-StableVisualMode($detectedVisualMode) {
     if ([string]::IsNullOrWhiteSpace($detectedVisualMode)) { return $script:lastVisualMode }
 
@@ -268,11 +380,35 @@ function Update-VisualMode {
     $stable = Get-StableVisualMode $detected
     $script:state.VisualMode = $stable
     $script:state.VisualModeCode = if ($stable -eq "ATMOS") { "1" } else { "0" }
+    Update-PresentationState
 }
 
 function Process-DenonLine($line) {
     if ([string]::IsNullOrWhiteSpace($line)) { return }
     $line = $line.Trim()
+
+    # CV? returns one CV<channel> row for every currently active AVR output and
+    # closes the transaction with CVEND. Commit only complete transactions so a
+    # reconnect or partial response cannot blank or partially freeze the map.
+    if ($line -eq "CVEND") {
+        if ($script:collectingActiveChannels) {
+            foreach ($channel in $script:activeChannelStateKeys.Keys) {
+                $stateKey = $script:activeChannelStateKeys[$channel]
+                $script:state[$stateKey] = if ($script:pendingActiveChannels.Contains($channel)) { 1 } else { 0 }
+            }
+            $script:collectingActiveChannels = $false
+        }
+        return
+    }
+
+    if ($line -match "^CV(FHL|FHR|FL|FR|SL|SR|TRL|TRR|SW2|SW|C)\s+\d") {
+        if (-not $script:collectingActiveChannels) {
+            $script:pendingActiveChannels.Clear()
+            $script:collectingActiveChannels = $true
+        }
+        [void]$script:pendingActiveChannels.Add($Matches[1])
+        return
+    }
 
     # Volume responses must be handled before the more general MS handlers.
     if ($line -match "^MV\d{2,3}$") {
@@ -297,15 +433,8 @@ function Process-DenonLine($line) {
             $script:state.QuickSelectName = "Quick Select $number"
         }
 
-        # Quick Selects 1-2 are the HTPC presets; 3-4 are the Lyr presets.
-        # This gives an immediate truthful Source value even while the AVR is
-        # still settling and before the separate SI response arrives.
-        switch ($number) {
-            1 { $script:state.Source = "HTPC" }
-            2 { $script:state.Source = "HTPC" }
-            3 { $script:state.Source = "LYR+" }
-            4 { $script:state.Source = "LYR+" }
-        }
+        # Quick Select remains displayed telemetry only. Source identity comes
+        # exclusively from the AVR input-source responses.
         return
     }
 
@@ -315,14 +444,8 @@ function Process-DenonLine($line) {
     if ($line -match "^SI(.+)$") {
         $rawSource = $Matches[1].Trim()
 
-        switch ($rawSource.ToUpperInvariant()) {
-            "CBL/SAT" { $script:state.Source = "HTPC" }
-            "SAT/CBL" { $script:state.Source = "HTPC" }
-            "GAME"    { $script:state.Source = "LYR+" }
-            "DVD"     { $script:state.Source = "PS5" }
-            "8K"      { $script:state.Source = "XBOX" }
-            default   { $script:state.Source = $rawSource.ToUpperInvariant() }
-        }
+        $script:state.Source = Normalize-Source $rawSource
+        Update-PresentationState
         return
     }
 
@@ -339,19 +462,12 @@ function Process-DenonLine($line) {
 function Apply-FastXml($info) {
     if ($null -eq $info) { return }
 
-    $source = [string]$info.Information.Zone.MainZone.Name
+    $source = [string]$info.Information.Zone.MainZone.SelectSource
     if ([string]::IsNullOrWhiteSpace($source)) {
-        $source = [string]$info.Information.Zone.MainZone.SelectSource
+        $source = [string]$info.Information.Zone.MainZone.Name
     }
 
-    switch ($source) {
-        "CBL/SAT" { $source = "PC" }
-        "SAT/CBL" { $source = "PC" }
-        "DVD" { $source = "PS5" }
-        "8K" { $source = "XBOX" }
-    }
-
-    $script:state.Source = $source
+    $script:state.Source = Normalize-Source $source
     $script:state.Mode = Format-ListeningMode ([string]$info.Information.Audio.SoundMode)
     $script:state.InputSignal = Format-InputSignal ([string]$info.Information.Audio.InputSignal)
     $script:state.SampleRate = [string]$info.Information.Audio.SampleRate
@@ -656,6 +772,10 @@ QuickSelectName=$($script:state.QuickSelectName)
 Mode=$($script:state.Mode)
 VisualMode=$($script:state.VisualMode)
 VisualModeCode=$($script:state.VisualModeCode)
+DisplayMode=$($script:state.DisplayMode)
+DisplayModeCode=$($script:state.DisplayModeCode)
+LevelSource=$($script:state.LevelSource)
+LevelSourceCode=$($script:state.LevelSourceCode)
 InputSignal=$($script:state.InputSignal)
 SampleRate=$($script:state.SampleRate)
 SpeakerPreset=$($script:state.SpeakerPreset)
@@ -663,6 +783,17 @@ MultEQ=$($script:state.MultEQ)
 DynamicEQ=$dynamicEqDisplay
 ReferenceLevelOffset=$($script:state.ReferenceLevelOffset)
 DynamicVolume=$($script:state.DynamicVolume)
+ActiveFHL=$($script:state.ActiveFHL)
+ActiveFHR=$($script:state.ActiveFHR)
+ActiveFL=$($script:state.ActiveFL)
+ActiveC=$($script:state.ActiveC)
+ActiveFR=$($script:state.ActiveFR)
+ActiveSL=$($script:state.ActiveSL)
+ActiveSR=$($script:state.ActiveSR)
+ActiveTRL=$($script:state.ActiveTRL)
+ActiveTRR=$($script:state.ActiveTRR)
+ActiveSUB1=$($script:state.ActiveSUB1)
+ActiveSUB2=$($script:state.ActiveSUB2)
 "@
 
     if ($statusText -eq $script:lastStatusText) { return }
@@ -682,7 +813,9 @@ if (Test-Path $outFile) {
             if ($state.Contains($key)) { $state[$key] = $value }
         }
     }
+    $state.Source = Normalize-Source $state.Source
     $lastVisualMode = [string]$state.VisualMode
+    Update-PresentationState
 }
 
 # Load the known-good local name cache immediately so Quick Select labels work
@@ -727,6 +860,20 @@ try {
         if ($null -ne $client -and $client.Connected -and $now -ge $nextVolumeQuery) {
             try { $writer.WriteLine("MV?") } catch {}
             $nextVolumeQuery = $now.AddMilliseconds($volumeQueryIntervalMs)
+        }
+
+        # Query the AVR's live output-channel list. Process-DenonLine commits the
+        # result only after CVEND, preserving the last complete map on failure.
+        if ($null -ne $client -and $client.Connected -and $now -ge $nextChannelQuery) {
+            try {
+                $pendingActiveChannels.Clear()
+                $collectingActiveChannels = $true
+                $writer.WriteLine("CV?")
+            }
+            catch {
+                $collectingActiveChannels = $false
+            }
+            $nextChannelQuery = $now.AddMilliseconds($channelQueryIntervalMs)
         }
 
         # Quick Select is not reliably announced when recalled from the remote,
@@ -805,6 +952,3 @@ finally {
     try { $singleInstanceMutex.ReleaseMutex() } catch {}
     try { $singleInstanceMutex.Dispose() } catch {}
 }
-
-
-

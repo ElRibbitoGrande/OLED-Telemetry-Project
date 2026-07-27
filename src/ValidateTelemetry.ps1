@@ -24,42 +24,108 @@ function Write-Section {
     Write-Output ("-" * $Title.Length)
 }
 
-function Get-QuickSelect {
+function Get-DenonState {
     param([string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return [pscustomobject]@{
             Success = $false
-            Value = $null
+            Values = @{}
             Message = "MISSING: $Path"
         }
     }
 
     try {
-        $line = Get-Content -LiteralPath $Path -ErrorAction Stop |
-            Where-Object { $_ -match "^QuickSelect=(.*)$" } |
-            Select-Object -First 1
-
-        if ($null -eq $line -or $line -notmatch "^QuickSelect=(.*)$") {
-            throw "QuickSelect entry was not found."
+        $values = @{}
+        foreach ($line in Get-Content -LiteralPath $Path -ErrorAction Stop) {
+            if ($line -match "^([^=]+)=(.*)$") {
+                $values[$Matches[1]] = $Matches[2].Trim()
+            }
         }
 
-        $value = 0
-        if (-not [int]::TryParse($Matches[1].Trim(), [ref]$value)) {
-            throw "QuickSelect value '$($Matches[1].Trim())' is not an integer."
+        foreach ($requiredKey in @("Source", "DisplayMode", "LevelSource")) {
+            if (-not $values.ContainsKey($requiredKey) -or
+                [string]::IsNullOrWhiteSpace([string]$values[$requiredKey])) {
+
+                throw "$requiredKey entry was not found or was empty."
+            }
         }
 
         return [pscustomobject]@{
             Success = $true
-            Value = $value
-            Message = "Quick Select: $value"
+            Values = $values
+            Message = ""
         }
     }
     catch {
         return [pscustomobject]@{
             Success = $false
-            Value = $null
+            Values = @{}
             Message = "ERROR: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Get-ExpectedDisplayRouting {
+    param([hashtable]$State)
+
+    $source = ([string]$State.Source).Trim().ToUpperInvariant()
+    $formatText = "{0} {1}" -f [string]$State.InputSignal, [string]$State.Mode
+    $formatDisplayMode = if ($formatText -match "DTS:X|NEURAL:X") {
+        "DTSX_LOGO"
+    }
+    elseif ([string]$State.VisualMode -eq "ATMOS" -or $formatText -match "ATMOS") {
+        "ATMOS_LOGO"
+    }
+    else {
+        "VU"
+    }
+
+    switch ($source) {
+        "HTPC" {
+            return [pscustomobject]@{
+                Collector = "Apple"
+                AppleExpected = 1
+                WiiMExpected = 0
+                DisplayMode = $formatDisplayMode
+                LevelSource = if ($formatDisplayMode -eq "VU") { "PC_AUDIO" } else { "NONE" }
+            }
+        }
+        "LYR+" {
+            return [pscustomobject]@{
+                Collector = "WiiM"
+                AppleExpected = 0
+                WiiMExpected = 1
+                DisplayMode = "VU"
+                LevelSource = "NONE"
+            }
+        }
+        "XBOX" {
+            return [pscustomobject]@{
+                Collector = "None"
+                AppleExpected = 0
+                WiiMExpected = 0
+                DisplayMode = "XBOX_LOGO"
+                LevelSource = "NONE"
+            }
+        }
+        "PS5" {
+            return [pscustomobject]@{
+                Collector = "None"
+                AppleExpected = 0
+                WiiMExpected = 0
+                DisplayMode = "PS5_LOGO"
+                LevelSource = "NONE"
+            }
+        }
+        default {
+            return [pscustomobject]@{
+                Collector = "None"
+                AppleExpected = 0
+                WiiMExpected = 0
+                DisplayMode = $formatDisplayMode
+                LevelSource = "NONE"
+            }
         }
     }
 }
@@ -210,35 +276,70 @@ function Write-HashComparison {
     }
 }
 
+function Write-OptionalConsoleImage {
+    param(
+        [string]$Label,
+        [string]$Path
+    )
+
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            Write-Output ("{0,-12} PRESENT  {1}" -f $Label, $Path)
+        }
+        else {
+            Write-Output ("{0,-12} MISSING  {1}  (WARNING)" -f $Label, $Path)
+            Set-OverallSeverity "WARNING"
+        }
+    }
+    catch {
+        Write-Output ("{0,-12} ERROR: {1}  (WARNING)" -f $Label, $_.Exception.Message)
+        Set-OverallSeverity "WARNING"
+    }
+}
+
 Write-Output "OLED Telemetry Validation"
 Write-Output ("Checked: {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff zzz"))
 Write-Output ("Live:    {0}" -f $LiveRoot)
 Write-Output ("Repo:    {0}" -f $RepositoryRoot)
 
-Write-Section "Quick Select"
-$quickSelectResult = Get-QuickSelect -Path (Join-Path $LiveRoot "denon_status.txt")
-Write-Output $quickSelectResult.Message
-if (-not $quickSelectResult.Success) {
-    Set-OverallSeverity "FAILED"
-}
-
+Write-Section "Display Routing"
+$denonStateResult = Get-DenonState -Path (Join-Path $LiveRoot "denon_status.txt")
 $appleExpected = 0
 $wiimExpected = 0
-if ($quickSelectResult.Success) {
-    if ($quickSelectResult.Value -in @(1, 2)) {
-        $appleExpected = 1
-        Write-Output "Expected metadata collector: Apple Music"
-    }
-    elseif ($quickSelectResult.Value -in @(3, 4)) {
-        $wiimExpected = 1
-        Write-Output "Expected metadata collector: WiiM"
-    }
-    else {
-        Write-Output "Expected metadata collector: Neither"
-    }
+
+if (-not $denonStateResult.Success) {
+    Write-Output $denonStateResult.Message
+    Write-Output "Source:             UNKNOWN"
+    Write-Output "DisplayMode:        UNKNOWN"
+    Write-Output "LevelSource:        UNKNOWN"
+    Write-Output "Expected collector: UNKNOWN"
+    Set-OverallSeverity "FAILED"
 }
 else {
-    Write-Output "Expected metadata collector: UNKNOWN"
+    $denonState = $denonStateResult.Values
+    $expectedRouting = Get-ExpectedDisplayRouting -State $denonState
+    $appleExpected = $expectedRouting.AppleExpected
+    $wiimExpected = $expectedRouting.WiiMExpected
+
+    Write-Output ("Source:             {0}" -f $denonState.Source)
+    Write-Output ("DisplayMode:        {0}" -f $denonState.DisplayMode)
+    Write-Output ("LevelSource:        {0}" -f $denonState.LevelSource)
+    Write-Output ("Expected collector: {0}" -f $expectedRouting.Collector)
+
+    if ([string]$denonState.DisplayMode -ne $expectedRouting.DisplayMode) {
+        Write-Output ("FAILED: DisplayMode expected {0}." -f $expectedRouting.DisplayMode)
+        Set-OverallSeverity "FAILED"
+    }
+
+    if ([string]$denonState.LevelSource -notin @("PC_AUDIO", "ANALOG_ADC", "NONE")) {
+        Write-Output "FAILED: LevelSource is not a recognized value."
+        Set-OverallSeverity "FAILED"
+    }
+
+    if ([string]$denonState.LevelSource -ne $expectedRouting.LevelSource) {
+        Write-Output ("FAILED: LevelSource expected {0}." -f $expectedRouting.LevelSource)
+        Set-OverallSeverity "FAILED"
+    }
 }
 
 Write-Section "Telemetry Processes"
@@ -277,10 +378,6 @@ else {
             -Matches $matches `
             -ExpectedCount $expectation.Expected
     }
-
-    if (-not $quickSelectResult.Success) {
-        Set-OverallSeverity "FAILED"
-    }
 }
 
 Write-Section "Live File Freshness"
@@ -311,6 +408,7 @@ $hashPaths = @(
     "DecoderCollector.ps1"
     "StopTelemetry.cmd"
     "RestartTelemetry.cmd"
+    "Analog_Floating.ini"
     "NowPlaying\NowPlayingRouter.ps1"
     "NowPlaying\AppleMusicCollector.ps1"
     "NowPlaying\WiiM-NowPlaying-Bridge.ps1"
@@ -319,6 +417,16 @@ $hashPaths = @(
 foreach ($relativePath in $hashPaths) {
     Write-HashComparison -RelativePath $relativePath
 }
+
+Write-Section "Optional Console Images"
+$consoleImageRoot = Join-Path $LiveRoot "@Resources\Images\formats"
+Write-OptionalConsoleImage `
+    -Label "Xbox" `
+    -Path (Join-Path $consoleImageRoot "Xbox_Logo.png")
+
+Write-OptionalConsoleImage `
+    -Label "PS5" `
+    -Path (Join-Path $consoleImageRoot "PS5_Logo.png")
 
 Write-Section "Overall Result"
 $overallResult = switch ($script:OverallSeverity) {

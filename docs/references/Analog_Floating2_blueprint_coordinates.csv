@@ -1,0 +1,39 @@
+Region,Left,Top,Right,Bottom,Width,Height,CenterX,CenterY,MeasurementBasis
+Outer receiver display,209,47,1458,779,1249,732,833.5,413.0,visible rounded display outline
+Format region,291,181,462,230,171,49,376.5,205.5,label and value visible-pixel envelope
+Dynamic logo region,697,65,950,247,253,182,823.5,156.0,visible Dolby artwork envelope
+Source region,1320,181,1390,229,70,48,1355.0,205.0,label and value visible-pixel envelope
+Listening Mode region,721,264,934,313,213,49,827.5,288.5,label and value visible-pixel envelope
+Quick Select region,291,285,451,340,160,55,371.0,312.5,label and value visible-pixel envelope
+Sample Rate omitted region,528,324,751,374,223,50,639.5,349.0,blueprint allocation retained by adjacent boundary logic
+MultEQ region,751,324,1027,374,276,50,889.0,349.0,divider-to-divider allocation
+Dyn EQ omitted region,1027,324,1217,374,190,50,1122.0,349.0,blueprint allocation retained by adjacent boundary logic
+RLO region,1217,324,1400,374,183,50,1308.5,349.0,divider-to-top-rule-end allocation
+Lower dashboard region,225,394,1443,763,1218,369,834.0,578.5,visible rounded enclosure
+Now Playing region,225,408,582,755,357,347,403.5,581.5,left lower allocation
+Now Playing metadata region,304,441,531,551,227,110,417.5,496.0,title artist and album envelopes
+Album artwork region,258,570,372,695,114,125,315.0,632.5,visible artwork rectangle
+Service label region,401,641,511,662,110,21,456.0,651.5,service identity envelope
+Elapsed and duration region,401,674,512,697,111,23,456.5,685.5,time text envelope
+Progress track region,258,716,544,726,286,10,401.0,721.0,complete progress track
+Progress fill region,258,716,473,726,215,10,365.5,721.0,blueprint fill at depicted playback position
+Active Speakers region,582,408,906,755,324,347,744.0,581.5,center lower allocation
+Speaker FHL center,656,489,656,489,0,0,656.0,489.0,icon center
+Speaker FHR center,829,489,829,489,0,0,829.0,489.0,icon center
+Speaker FL center,625,553,625,553,0,0,625.0,553.0,icon center
+Speaker C center,741,553,741,553,0,0,741.0,553.0,icon center
+Speaker FR center,861,553,861,553,0,0,861.0,553.0,icon center
+Speaker SL center,663,609,663,609,0,0,663.0,609.0,icon center
+Speaker SR center,820,609,820,609,0,0,820.0,609.0,icon center
+Speaker TRL center,618,680,618,680,0,0,618.0,680.0,icon center
+Speaker TRR center,864,680,864,680,0,0,864.0,680.0,icon center
+Speaker SUB1 center,703,725,703,725,0,0,703.0,725.0,icon center
+Speaker SUB2 center,782,725,782,725,0,0,782.0,725.0,icon center
+VU pair region,906,408,1442,637,536,229,1174.0,522.5,lower-right upper allocation
+Left VU region,906,408,1174,637,268,229,1040.0,522.5,left half of VU allocation
+Left VU face,929,440,1168,627,239,187,1048.5,533.5,visible analog face and scale envelope
+Left VU needle pivot,1094,625,1094,625,0,0,1094.0,625.0,visible needle rotation origin
+Right VU region,1174,408,1442,637,268,229,1308.0,522.5,right half of VU allocation
+Right VU face,1194,440,1425,627,231,187,1309.5,533.5,visible analog face and scale envelope
+Right VU needle pivot,1356,625,1356,625,0,0,1356.0,625.0,visible needle rotation origin
+Volume region,906,637,1442,755,536,118,1174.0,696.0,blueprint Eco/Energy allocation repurposed for Volume

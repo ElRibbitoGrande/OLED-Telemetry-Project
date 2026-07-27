@@ -159,6 +159,19 @@ function Get-AppleArtwork {
     return ''
 }
 
+function Test-ValidArtwork {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        return (Test-Path -LiteralPath $Path -PathType Leaf) -and
+            (Get-Item -LiteralPath $Path -ErrorAction Stop).Length -gt 1024
+    }
+    catch {
+        return $false
+    }
+}
+
 function Get-AppleMusicSnapshot {
     $manager = Await-WinRT -Operation ($managerType::RequestAsync()) -ResultType $managerType
     $sessions = @($manager.GetSessions())
@@ -219,21 +232,59 @@ function Write-State {
     $album = $script:stableAlbum
 
     $trackKey = '{0}|{1}|{2}' -f (Clean-Value $Snapshot.Title), $artist, $album
-    if ($active -eq 1 -and $trackKey -ne $script:lastArtworkTrackKey) {
-        $script:lastArtworkTrackKey = $trackKey
-        $script:currentArtwork = ''
-        try {
-            $script:currentArtwork = Get-AppleArtwork -Title (Clean-Value $Snapshot.Title) -Artist $artist -Album $album
-            if ($script:currentArtwork) { Write-Log "Artwork saved for: $trackKey" }
-            else { Write-Log "No confident artwork match for: $trackKey" }
-        }
-        catch {
-            Write-Log "Artwork lookup failed for '$trackKey': $($_.Exception.Message)"
+    if ($active -eq 1) {
+        $script:inactivePollCount = 0
+
+        if ($trackKey -ne $script:lastArtworkTrackKey -and
+            (Get-Date) -ge $script:nextArtworkAttempt) {
+
+            if ($trackKey -ne $script:pendingArtworkTrackKey) {
+                $script:pendingArtworkTrackKey = $trackKey
+                $script:pendingArtworkFailures = 0
+            }
+
+            $replacement = ''
+            try {
+                $replacement = Get-AppleArtwork -Title (Clean-Value $Snapshot.Title) -Artist $artist -Album $album
+            }
+            catch {
+                Write-Log "Artwork lookup failed for '$trackKey': $($_.Exception.Message)"
+            }
+
+            if (Test-ValidArtwork $replacement) {
+                $script:currentArtwork = $replacement
+                $script:lastArtworkTrackKey = $trackKey
+                $script:pendingArtworkTrackKey = ''
+                $script:pendingArtworkFailures = 0
+                Write-Log "Artwork saved for: $trackKey"
+            }
+            else {
+                $script:pendingArtworkFailures++
+                Write-Log "No verified artwork for '$trackKey' (attempt $($script:pendingArtworkFailures))."
+
+                # Retain the last known-good image through brief lookup gaps, but
+                # do not show prior-track artwork indefinitely after a confirmed
+                # transition with no usable replacement.
+                if ($script:pendingArtworkFailures -ge 3) {
+                    $script:currentArtwork = ''
+                    $script:lastArtworkTrackKey = $trackKey
+                    $script:pendingArtworkTrackKey = ''
+                }
+            }
+            $script:nextArtworkAttempt = (Get-Date).AddSeconds(5)
         }
     }
-    elseif ($active -eq 0) {
-        $script:currentArtwork = ''
+    else {
+        $script:inactivePollCount++
+        if ($script:inactivePollCount -ge 3) {
+            $script:currentArtwork = ''
+            $script:lastArtworkTrackKey = ''
+            $script:pendingArtworkTrackKey = ''
+            $script:pendingArtworkFailures = 0
+        }
     }
+
+    $artworkAvailable = Test-ValidArtwork $script:currentArtwork
 
     $position = [long]$Snapshot.PositionSeconds
     $duration = [long]$Snapshot.DurationSeconds
@@ -252,8 +303,8 @@ function Write-State {
         "Position=$(Format-Time $position)"
         "Duration=$(Format-Time $duration)"
         "Progress=$progress"
-        "ArtworkAvailable=$(if ($Snapshot.ArtworkAvailable) { 1 } else { 0 })"
-        "Artwork=$($script:currentArtwork)"
+        "ArtworkAvailable=$(if ($artworkAvailable) { 1 } else { 0 })"
+        "Artwork=$(if ($artworkAvailable) { $script:currentArtwork } else { '' })"
         "Updated=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     )
 
@@ -270,6 +321,10 @@ $stableAlbum = ''
 $lastArtworkTrackKey = ''
 $currentArtwork = ''
 $artworkToggle = $false
+$pendingArtworkTrackKey = ''
+$pendingArtworkFailures = 0
+$nextArtworkAttempt = Get-Date
+$inactivePollCount = 0
 
 while ($true) {
     try {

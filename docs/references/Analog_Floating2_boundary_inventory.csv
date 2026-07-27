@@ -1,0 +1,13 @@
+BoundaryID,Orientation,StartX,StartY,EndX,EndY,ThicknessPx,ColorRGBA,Extent,RegionsSeparated,RainmeterSection
+B01,Rounded enclosure,209,47,1458,779,2,"146,139,117,225",full,receiver display from surrounding chassis,AF2DisplayOutline
+B02,Horizontal,282,253,1400,253,2,"85,96,134,255",partial,Format/logo/Source from Listening/Quick/MultEQ/RLO,AF2TopRule
+B03,Vertical,528,324,528,374,2,"92,105,137,235",partial,Quick Select from omitted Sample Rate allocation,AF2QuickDivider
+B04,Vertical,751,324,751,374,2,"92,105,137,235",partial,omitted Sample Rate allocation from MultEQ,AF2QuickMultEQDivider
+B05,Vertical,1027,324,1027,374,2,"92,105,137,235",partial,MultEQ from omitted Dyn EQ allocation,AF2MultEQRLODivider
+B06,Vertical,1217,324,1217,374,2,"92,105,137,235",partial,omitted Dyn EQ allocation from RLO,AF2RLOEndDivider
+B07,Rounded enclosure,225,394,1443,763,2,"92,105,137,235",full,lower dashboard from upper telemetry area,AF2LowerOutline
+B08,Vertical,582,408,582,755,2,"122,132,155,255",partial,Now Playing from Active Speakers,AF2NowSpeakerDivider
+B09,Vertical,906,408,906,755,2,"117,130,151,255",partial,Active Speakers from VU and Volume,AF2SpeakerVUDivider
+B10,Horizontal,906,637,1442,637,2,"92,105,137,255",partial,VU pair from Volume,AF2VUVolumeDivider
+B11,Horizontal,258,716,544,716,10,"35,51,89,255",partial,Now Playing progress track from lower empty margin,AF2ProgressTrack
+B12,Horizontal,258,716,473,716,10,"225,235,255,255",partial,elapsed playback from remaining progress track,AF2Progress

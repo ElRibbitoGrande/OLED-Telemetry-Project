@@ -8,14 +8,6 @@
 
 $ErrorActionPreference = "Continue"
 
-# Your present Quick Select map:
-#   1 = HTPC Dolby
-#   2 = HTPC Multi
-#   3 = LYR+ Stereo
-#   4 = LYR+ Multi
-$AppleQuickSelects = @("1", "2")
-$WiiMQuickSelects  = @("3", "4")
-
 $RouterDirectory = Split-Path -Parent $NowPlayingPath
 $RouterHeartbeatPath = Join-Path $RouterDirectory "router_heartbeat.txt"
 $RouterLogPath = Join-Path $RouterDirectory "router.log"
@@ -24,6 +16,7 @@ $RouterLogRetainedCharacters = 32KB
 $RouterHeartbeatIntervalSeconds = 5
 
 $script:ActiveMode = ""
+$script:ActiveSource = ""
 $script:ChildProcess = $null
 $script:NextHeartbeat = Get-Date
 
@@ -60,8 +53,6 @@ function Write-RouterHeartbeat {
 function Get-DenonState {
     $state = @{
         Source = ""
-        QuickSelect = ""
-        QuickSelectName = ""
         Mode = ""
         InputSignal = ""
     }
@@ -72,7 +63,7 @@ function Get-DenonState {
 
     try {
         foreach ($line in Get-Content -LiteralPath $DenonStatusPath -ErrorAction Stop) {
-            if ($line -match '^(Source|QuickSelect|QuickSelectName|Mode|InputSignal)=(.*)$') {
+            if ($line -match '^(Source|Mode|InputSignal)=(.*)$') {
                 $state[$Matches[1]] = $Matches[2].Trim()
             }
         }
@@ -130,10 +121,14 @@ function Stop-CurrentCollector {
 
     $script:ChildProcess = $null
     $script:ActiveMode = ""
+    $script:ActiveSource = ""
 }
 
 function Start-Collector {
-    param([Parameter(Mandatory)][ValidateSet("Apple","WiiM")][string]$Mode)
+    param(
+        [Parameter(Mandatory)][ValidateSet("Apple","WiiM")][string]$Mode,
+        [Parameter(Mandatory)][string]$Source
+    )
 
     $path = if ($Mode -eq "Apple") { $AppleCollectorPath } else { $WiiMCollectorPath }
 
@@ -154,8 +149,9 @@ function Start-Collector {
             -PassThru
 
         $script:ActiveMode = $Mode
+        $script:ActiveSource = $Source
         Write-Host "$(Get-Date -Format HH:mm:ss) Started $Mode collector (PID $($script:ChildProcess.Id))."
-        Write-RouterLog "Started $Mode collector PID $($script:ChildProcess.Id)."
+        Write-RouterLog "Started $Mode collector PID $($script:ChildProcess.Id) for Source=$Source."
     }
     catch {
         Write-Warning "Could not start $Mode collector: $($_.Exception.Message)"
@@ -193,7 +189,7 @@ function Write-InactiveNowPlaying {
 function Set-Mode {
     param(
         [Parameter(Mandatory)][ValidateSet("Apple","WiiM","None")][string]$Mode,
-        [hashtable]$State
+        [Parameter(Mandatory)][string]$Source
     )
 
     $collectorHealthy =
@@ -204,31 +200,38 @@ function Set-Mode {
         $script:ChildProcess.HasExited -and
         $script:ActiveMode -in @("Apple", "WiiM")) {
 
-        Write-RouterLog "Unexpected $($script:ActiveMode) collector exit; PID $($script:ChildProcess.Id), exit code $($script:ChildProcess.ExitCode)."
+        Write-RouterLog "Unexpected $($script:ActiveMode) collector exit for Source=$Source; PID $($script:ChildProcess.Id), exit code $($script:ChildProcess.ExitCode)."
     }
 
-    if (($Mode -eq $script:ActiveMode) -and (($Mode -eq "None") -or $collectorHealthy)) {
+    if (($Mode -eq $script:ActiveMode) -and
+        ($Source -eq $script:ActiveSource) -and
+        (($Mode -eq "None") -or $collectorHealthy)) {
+
         return
     }
 
-    if ($Mode -eq $script:ActiveMode) {
-        Write-RouterLog "Restart decision: $Mode collector is not running."
+    if ($Mode -eq $script:ActiveMode -and $Source -eq $script:ActiveSource) {
+        Write-RouterLog "Restart decision: $Mode collector is not running for Source=$Source."
+    }
+    elseif ($Mode -eq $script:ActiveMode) {
+        Write-RouterLog "Source change: $($script:ActiveSource) -> $Source; collector remains $Mode."
     }
     else {
         $previousMode = if ([string]::IsNullOrWhiteSpace($script:ActiveMode)) { "None" } else { $script:ActiveMode }
-        Write-RouterLog "Collector change: $previousMode -> $Mode."
+        Write-RouterLog "Collector change: $previousMode -> $Mode for Source=$Source."
     }
 
     Stop-CurrentCollector
 
     switch ($Mode) {
-        "Apple" { Start-Collector -Mode "Apple" }
-        "WiiM"  { Start-Collector -Mode "WiiM" }
+        "Apple" { Start-Collector -Mode "Apple" -Source $Source }
+        "WiiM"  { Start-Collector -Mode "WiiM" -Source $Source }
         "None"  {
             Write-InactiveNowPlaying
             $script:ActiveMode = "None"
-            Write-Host "$(Get-Date -Format HH:mm:ss) Now Playing hidden (Quick Select $($State.QuickSelect): $($State.QuickSelectName))."
-            Write-RouterLog "Now Playing hidden for Quick Select $($State.QuickSelect) ($($State.QuickSelectName))."
+            $script:ActiveSource = $Source
+            Write-Host "$(Get-Date -Format HH:mm:ss) Now Playing hidden for Source=$Source."
+            Write-RouterLog "Now Playing hidden for Source=$Source."
         }
     }
 }
@@ -243,9 +246,9 @@ Stop-MatchingCollector -ScriptPath $AppleCollectorPath
 Stop-MatchingCollector -ScriptPath $WiiMCollectorPath
 
 Write-Host "Now Playing Router v2 started."
-Write-Host "Quick Selects 1-2 -> Apple Music"
-Write-Host "Quick Selects 3-4 -> WiiM"
-Write-Host "Anything else      -> hide Now Playing"
+Write-Host "Source=HTPC -> Apple Music"
+Write-Host "Source=LYR+ -> WiiM"
+Write-Host "Other sources -> hide Now Playing"
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 
@@ -259,25 +262,25 @@ try {
         }
 
         $state = Get-DenonState
-        $quickSelect = [string]$state.QuickSelect
+        $source = ([string]$state.Source).Trim().ToUpperInvariant()
 
-        if ($quickSelect -in $AppleQuickSelects) {
+        if ($source -eq "HTPC") {
             $desiredMode = "Apple"
         }
-        elseif ($quickSelect -in $WiiMQuickSelects) {
+        elseif ($source -eq "LYR+") {
             $desiredMode = "WiiM"
         }
         else {
             $desiredMode = "None"
         }
 
-        $signature = "$($state.Source)|$($state.QuickSelect)|$($state.QuickSelectName)|$desiredMode"
+        $signature = "$source|$desiredMode"
         if ($signature -ne $lastSignature) {
-            Write-Host "$(Get-Date -Format HH:mm:ss) Source='$($state.Source)' QuickSelect='$($state.QuickSelect)' Name='$($state.QuickSelectName)' -> $desiredMode"
+            Write-Host "$(Get-Date -Format HH:mm:ss) Source='$source' -> $desiredMode"
             $lastSignature = $signature
         }
 
-        Set-Mode -Mode $desiredMode -State $state
+        Set-Mode -Mode $desiredMode -Source $source
         Start-Sleep -Seconds $PollSeconds
     }
 }

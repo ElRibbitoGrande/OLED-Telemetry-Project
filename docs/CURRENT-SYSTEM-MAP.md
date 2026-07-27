@@ -25,7 +25,7 @@ The highest-value current suspects are:
 - **The main Denon heartbeat proves loop liveness, not data freshness.** It advances every two seconds even if Telnet is disconnected and all optional XML polls are failing. The manager will not restart that collector.
 - **State is deliberately sticky.** The Denon collector imports the previous output at startup and most parsers update only non-empty/valid fields. Failed reads generally preserve prior values without an age marker in the displayed file.
 - **Rainmeter's parsers have no explicit stale/error presentation.** A failed file read or full-regex mismatch can retain the last successful WebParser values, while the unrelated AudioLevel measures continue.
-- **The active skin is ambiguous in the repository.** `src\Analog_Floating.ini` and `src\Skins\Analog_Floating.ini` differ. The latter matches the current collector's Quick Select fields; the repository alone does not prove which copy is deployed.
+- **The production source skin is explicit.** `src\Analog_Floating.ini` is authoritative for this project; `src\Skins\Analog_Floating.ini` is retained as reference material.
 
 No repair or refactor is included in this document.
 
@@ -90,14 +90,14 @@ There are no named pipes, sockets between local collectors, databases, registry 
 | `src\TelemetryManager.ps1` | Persistent | Single-instance supervisor. Starts/restarts the Denon collector, Now Playing router, and decoder collector; writes manager state. |
 | `src\denon_status.ps1` | Persistent | Main AVR collector and state aggregator. Reads Telnet events/queries, slow Denon XML, cached Quick Select names, and decoder state; atomically publishes the AVR status file. |
 | `src\DecoderCollector.ps1` | Persistent | Separately polls slow decoder XML (`type=12`) so TLS latency cannot block the main Telnet loop. |
-| `src\NowPlaying\NowPlayingRouter.ps1` | Persistent | Reads current Quick Select and owns selection/lifecycle of exactly one conditional metadata collector. |
+| `src\NowPlaying\NowPlayingRouter.ps1` | Persistent | Reads normalized AVR Source and owns selection/lifecycle of exactly one conditional metadata collector. |
 | `src\NowPlaying\AppleMusicCollector.ps1` | Conditional persistent | Reads Windows Global System Media Transport Controls; searches iTunes for matched artwork; writes common Now Playing state. |
 | `src\NowPlaying\WiiM-NowPlaying-Bridge.ps1` | Conditional persistent | Polls WiiM player status/metadata/artwork; writes common Now Playing state. |
 | `src\LaunchTelemetryManager.vbs` | One-shot | Starts the manager hidden against `C:\RainmeterDenon`. |
 | `src\LaunchRainmeter.vbs` | One-shot | Waits 10 seconds, then starts Rainmeter hidden. |
 | `src\NowPlaying\LaunchAppleMusicCollector.vbs` | One-shot, legacy/manual | Directly starts Apple collector. This bypasses router ownership and can create competing writers. |
-| `src\RestartTelemetry.cmd` | One-shot/manual | Stops matching manager/Denon/Apple/decoder processes, waits 750 ms, relaunches manager. It does **not** match router or WiiM processes. |
-| `src\StopTelemetry.cmd` | One-shot/manual | Stops matching manager/Denon/Apple/decoder processes. It does **not** match router or WiiM processes. |
+| `src\RestartTelemetry.cmd` | One-shot/manual | Stops all six telemetry PowerShell components, waits 750 ms, and relaunches the manager. |
+| `src\StopTelemetry.cmd` | One-shot/manual | Stops all six telemetry PowerShell components. |
 
 ### Diagnostic/development executables (not expected to remain running)
 
@@ -133,9 +133,9 @@ Steady state should contain:
 4. One PowerShell process for `DecoderCollector.ps1`.
 5. One PowerShell process for `NowPlayingRouter.ps1`.
 6. Zero or one metadata child:
-   - Apple collector for Quick Select 1 or 2.
-   - WiiM collector for Quick Select 3 or 4.
-   - Neither for any other/unknown Quick Select.
+   - Apple collector for `Source=HTPC`.
+   - WiiM collector for `Source=LYR+`.
+   - Neither for `Source=PS5`, `Source=XBOX`, or any other/unknown source.
 7. Transient `curl.exe` child processes:
    - Decoder curl approximately once per 8-second cycle.
    - Quick Select-name curl approximately every 10 seconds, serialized against main collector XML tasks.
@@ -151,7 +151,7 @@ Implemented launch paths:
 - `RestartTelemetry.cmd` manually kills selected collectors and relaunches the manager.
 - `StopTelemetry.cmd` manually kills selected collectors.
 - The manager launches its three supervised collectors.
-- The router launches Apple or WiiM based on Quick Select.
+- The router launches Apple for `Source=HTPC`, WiiM for `Source=LYR+`, and neither for other sources. Quick Select remains display-only telemetry.
 - `LaunchAppleMusicCollector.vbs` is a direct legacy/manual entry point.
 - Old `LaunchDenonTelemetry.vbs` files exist only in historical folders.
 
@@ -165,7 +165,7 @@ The repository therefore cannot prove whether live startup is Task Scheduler, St
 
 | Path under `C:\RainmeterDenon` | Writer | Reader | Semantics and risk |
 |---|---|---|---|
-| `denon_status.txt` | Denon collector | Rainmeter; router | Consolidated AVR state. Written only when text changes by temp-and-move. Contains no `Updated` timestamp, so unchanged-valid and frozen are indistinguishable. |
+| `denon_status.txt` | Denon collector | Rainmeter; router | Consolidated AVR state, including normalized `Source`, `DisplayMode`, and `LevelSource`. Written only when text changes by temp-and-move. Contains no `Updated` timestamp, so unchanged-valid and frozen are indistinguishable. |
 | `denon_status.tmp` | Denon collector | none | Atomic-write staging. Fixed name; mutex normally prevents competing current collectors. |
 | `denon_heartbeat.txt` | Denon collector | manager | Loop heartbeat every 2 s; not proof that any source data succeeded. |
 | `decoder_status.txt` | decoder collector | Denon collector | Last successful decoder fields plus `Updated`. Preserved on decoder failure. |
@@ -199,29 +199,32 @@ The checked-in `.txt`, `.xml`, `.jpg`, and `.log` files under `src` are samples/
 
 ## Display ownership
 
-The mapping below follows `src\Skins\Analog_Floating.ini`, which best matches the current collector schema. The older top-level `src\Analog_Floating.ini` omits Quick Select fields and has a somewhat different telemetry layout.
+The active production skin is `src\Analog_Floating.ini`. `src\Skins\Analog_Floating.ini` remains reference material and is not updated with production presentation routing.
 
 | Display element | Rainmeter measure/meter | Immediate source | Owning component |
 |---|---|---|---|
 | Left/right VU faces | static image meters | PNG assets | Rainmeter skin |
-| Left/right needles and shadows | `MeasureAudioRMS_L/R` | Windows default output RMS | Rainmeter `AudioLevel` plugin |
+| Left/right needles and shadows | `MeasureDisplayRMS_L/R` | Windows output RMS gated by `LevelSource` | Rainmeter `AudioLevel` plugin plus Denon presentation state |
 | Center volume | `MeasureVolumeRelative` -> Calc +80 | `denon_status.txt` Volume | Denon collector, Telnet `MV` |
-| Source | `MeasureSource` | `denon_status.txt` Source | Denon collector, `SI`, Quick Select inference, and decoder XML source |
+| Source | `MeasureSource` | `denon_status.txt` Source | Denon collector, normalized from AVR `SI` and XML source |
 | Quick Select label | `MeasureQuickSelectName` | consolidated status | Denon collector, Telnet `MSQUICK` plus type=7/cache names |
 | Listening mode | `MeasureMode` | consolidated status | Decoder file takes precedence every 750 ms; Telnet `MS` can update between imports |
 | Audio/input format | `MeasureInputSignal` | consolidated status | Decoder collector type=12 via Denon importer |
-| Sample rate | parsed but not displayed in current `src\Skins\Analog_Floating.ini` | consolidated status | Decoder collector |
+| Sample rate | `MeasureSampleRate` | consolidated status | Decoder collector |
 | MultEQ | `MeasureMultEQ` | consolidated status | Denon collector type=9 Audyssey XML |
 | Dynamic EQ | `MeasureDynamicEQ` | consolidated status | Denon collector type=9 Audyssey XML |
 | RLO, Dynamic Volume, Speaker Preset | parsed; some not displayed in this skin revision | consolidated status | Denon collector type=9/type=10 |
-| Atmos/DTS logos | static image groups | Intended mode selection fields | Rainmeter assets plus collector mode; however current skin contains no mode-trigger action beyond refresh default, so source alone does not show runtime switching |
+| VU/Atmos/DTS/Xbox/PS5 presentation | mutually exclusive meter groups | `DisplayMode` | Denon presentation decision plus Rainmeter WebParser actions |
+| Meter level source | gated RMS calculation | `LevelSource` | `PC_AUDIO` enables AudioLevel; `NONE` rests needles; `ANALOG_ADC` is reserved for future integration |
 | Now Playing visibility | `MeasureMusicActive` | `now_playing.txt` Active | Active metadata collector/router; Rainmeter show/hide action |
 | Service, title, artist, album | music WebParser children | `now_playing.txt` | Apple or WiiM collector |
 | Artwork | `MeasureMusicArtwork` path | cached JPG | Apple or WiiM collector |
 | Time/duration/progress | music WebParser children | `now_playing.txt` | Apple or WiiM collector |
 | Static labels/panels | Rainmeter meters | INI | Rainmeter |
 
-`ChannelsValue` in the top-level skin is static `-- -> --`; in the current skin candidate that area is repurposed for Quick Select. It is not a live channel-layout collector.
+For `Source=LYR+`, WiiM supplies content metadata only and the analog LYR+ path has no level telemetry. The current `LevelSource=NONE` intentionally rests the existing needles. A future high-impedance RCA sensing PCB and ADC collector should integrate by supplying `LevelSource=ANALOG_ADC`; it must not change source-based metadata routing or the display layout.
+
+The former channel placeholder in the active skin is used for the Quick Select friendly name. Quick Select remains display-only telemetry and does not control metadata, presentation, artwork, or level routing.
 
 ## Network and external-source calls
 
@@ -356,7 +359,7 @@ No current Plex endpoint, token, process query, or file integration exists. Plex
 8. **Audyssey request fault, cancel, bad XML, or missing nodes:** last MultEQ/DynamicEQ/RLO/DynamicVolume values remain.
 9. **Preset request fault/bad XML/missing node:** last SpeakerPreset remains.
 10. **Quick Select-name HTTP failure/bad XML:** cached names remain. Cache write failures are swallowed.
-11. **Quick Select `0`:** deliberately ignored, preserving previous Quick Select and possibly routing metadata for the prior source.
+11. **Quick Select `0`:** deliberately ignored, preserving previous Quick Select display telemetry; it does not control metadata routing or presentation.
 12. **Visual-mode stabilization:** a new mode must be observed twice; blank/unstable detection retains prior visual mode.
 13. **Status write-on-change:** no timestamp changes when state is unchanged, so freshness cannot be inferred from file mtime during legitimately steady state.
 14. **Status atomic-move failure:** terminating error can leave previous output in place until manager restart; restart imports it again.
@@ -369,7 +372,7 @@ No current Plex endpoint, token, process query, or file integration exists. Plex
 21. **Rainmeter WebParser read/regex failure:** child measures can keep their last successful values; no explicit invalidation is configured.
 22. **Rainmeter group state:** if `MeasureMusicActive` stops changing because parsing freezes, the Now Playing group remains in its last shown/hidden state.
 23. **Manager death:** all children may continue independently with no repository-defined mechanism to restart the manager; later individual hangs will not recover.
-24. **Stop/restart command omissions:** router and WiiM are not matched. A restart can leave an old router/WiiM alive while a new manager/router starts, producing process conflicts and shared-file races.
+24. **Process-discovery dependence:** stop/restart and supervision depend on `powershell.exe` command-line matching; inaccessible CIM data or a different PowerShell host can evade detection.
 
 ## Conditions producing a partial rather than total freeze
 
