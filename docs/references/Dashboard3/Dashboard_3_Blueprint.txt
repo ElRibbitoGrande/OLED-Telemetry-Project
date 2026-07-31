@@ -1,0 +1,161 @@
+The interesting thing is that the visualizer isn't actually that complicated once you decompose it.
+
+I see about six layers:
+
+Particles
+    ↑
+Vertical light streaks
+    ↑
+Glowing spectral surface
+    ↑
+Fine spectral mesh
+    ↑
+Dark reflective floor
+    ↑
+Background glow
+
+The "mountains" are almost certainly just an FFT that's been heavily processed.
+
+Instead of drawing this:
+
+||||||||||||||||||||||
+
+it becomes
+
+          /\
+        _/  \__
+    ___/       \____
+ __/                \____
+
+Then:
+
+interpolate between bins
+logarithmic frequency scale
+smooth over time
+add glow
+add a reflection
+sprinkle animated particles
+
+Suddenly it feels organic.
+
+The DSP side is surprisingly straightforward
+
+Assuming stereo PCM:
+
+PCM Samples
+      │
+Window Function
+      │
+2048-point FFT
+      │
+Magnitude
+      │
+Log Frequency Mapping
+      │
+Smoothing
+      │
+Peak Hold
+      │
+Renderer
+
+That's basically every music visualizer since Winamp.
+
+The artistry is in the renderer.
+
+I would not render bars
+
+I'd render a continuous mesh.
+
+Think of it as a landscape.
+
+Each x coordinate corresponds to a frequency.
+
+Each y coordinate corresponds to energy.
+
+The renderer connects every point with smooth splines.
+
+That alone gets you 80% of the look.
+
+Then add history
+
+This is what makes it feel alive.
+
+Instead of only drawing
+
+current FFT
+
+store
+
+FFT now
+FFT 16 ms ago
+FFT 32 ms ago
+FFT 48 ms ago
+...
+
+Then fade the older ones.
+
+The eye interprets this as motion.
+
+The colors are brilliant
+
+Notice they're not random.
+
+Deep Blue
+↓
+
+Cyan
+↓
+
+White
+
+↓
+
+Gold
+
+↓
+
+Orange
+
+The palette itself communicates intensity.
+
+No labels needed.
+
+My favorite detail
+
+The vertical light streaks.
+
+Those aren't spectrum bars.
+
+They're decorative.
+
+Every frequency peak emits little vertical rays upward.
+
+They're probably just alpha-blended lines whose brightness follows the FFT.
+
+They're almost free to render.
+
+But they make the whole thing sparkle.
+
+And the particles...
+
+I'd wager they're not tied directly to frequencies.
+
+Just:
+
+Peak occurs
+
+↓
+
+Spawn 8 particles
+
+↓
+
+Float upward
+
+↓
+
+Fade out
+
+Very inexpensive.
+
+Huge perceived complexity.
