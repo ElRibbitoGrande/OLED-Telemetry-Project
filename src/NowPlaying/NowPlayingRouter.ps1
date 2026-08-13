@@ -156,14 +156,37 @@ function Start-Collector {
     catch {
         Write-Warning "Could not start $Mode collector: $($_.Exception.Message)"
         Write-RouterLog "Failed to start $Mode collector: $($_.Exception.Message)"
+        Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'COLLECTOR_START_FAILED' -Fields @{
+            activeSource = $Source; selectedCollector = $Mode; exception = $_.Exception.Message
+        }
         $script:ChildProcess = $null
         $script:ActiveMode = ""
     }
 }
 
 function Write-InactiveNowPlaying {
+    param([string]$SelectedSource)
+
     $directory = Split-Path -Parent $NowPlayingPath
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
+
+    $previousArtist = ''
+    $previousTitle = ''
+    $previousStateSource = ''
+    if (Test-Path -LiteralPath $NowPlayingPath) {
+        try {
+            foreach ($line in Get-Content -LiteralPath $NowPlayingPath -ErrorAction Stop) {
+                if ($line -match '^(Artist|Title|Source)=(.*)$') {
+                    switch ($Matches[1]) {
+                        'Artist' { $previousArtist = $Matches[2] }
+                        'Title' { $previousTitle = $Matches[2] }
+                        'Source' { $previousStateSource = $Matches[2] }
+                    }
+                }
+            }
+        }
+        catch {}
+    }
 
     $content = @(
         "Active=0"
@@ -182,8 +205,32 @@ function Write-InactiveNowPlaying {
     ) -join "`r`n"
 
     $tempPath = "$NowPlayingPath.tmp"
-    [IO.File]::WriteAllText($tempPath, $content, [Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $tempPath -Destination $NowPlayingPath -Force
+    try {
+        [IO.File]::WriteAllText($tempPath, $content, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $tempPath -Destination $NowPlayingPath -Force
+        Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'ROUTER_STATE_WRITE' -Fields @{
+            activeSource = $SelectedSource; selectedCollector = 'None'; active = 0
+            source = ''; title = ''; artist = ''; album = ''; artworkAvailable = 0; artwork = ''
+            stateWrite = 'success'; statePath = $NowPlayingPath
+            reason = 'source is unsupported or idle'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($previousArtist)) {
+            Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'ARTIST_CLEARED_INTENTIONAL' -Fields @{
+                activeSource = $SelectedSource; selectedCollector = 'None'; active = 0
+                previousSource = $previousStateSource; previousTitle = $previousTitle
+                previousArtist = $previousArtist; artist = ''; lastKnownGoodArtist = 'cleared'
+                stateWrite = 'success'; reason = 'source is unsupported or idle'
+            }
+        }
+    }
+    catch {
+        Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'STATE_WRITE_FAILED' -Fields @{
+            activeSource = $SelectedSource; selectedCollector = 'None'; active = 0
+            stateWrite = 'failure'; statePath = $NowPlayingPath
+            reason = 'source is unsupported or idle'; exception = $_.Exception.Message
+        }
+        throw
+    }
 }
 
 function Set-Mode {
@@ -201,6 +248,11 @@ function Set-Mode {
         $script:ActiveMode -in @("Apple", "WiiM")) {
 
         Write-RouterLog "Unexpected $($script:ActiveMode) collector exit for Source=$Source; PID $($script:ChildProcess.Id), exit code $($script:ChildProcess.ExitCode)."
+        Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'COLLECTOR_EXIT' -Fields @{
+            activeSource = $Source; selectedCollector = $script:ActiveMode
+            collectorFresh = $false; childPid = $script:ChildProcess.Id
+            exitCode = $script:ChildProcess.ExitCode; reason = 'unexpected collector exit'
+        }
     }
 
     if (($Mode -eq $script:ActiveMode) -and
@@ -212,6 +264,10 @@ function Set-Mode {
 
     if ($Mode -eq $script:ActiveMode -and $Source -eq $script:ActiveSource) {
         Write-RouterLog "Restart decision: $Mode collector is not running for Source=$Source."
+        Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'COLLECTOR_RESTART' -Fields @{
+            activeSource = $Source; selectedCollector = $Mode
+            collectorFresh = $false; reason = 'selected collector is not running'
+        }
     }
     elseif ($Mode -eq $script:ActiveMode) {
         Write-RouterLog "Source change: $($script:ActiveSource) -> $Source; collector remains $Mode."
@@ -227,7 +283,7 @@ function Set-Mode {
         "Apple" { Start-Collector -Mode "Apple" -Source $Source }
         "WiiM"  { Start-Collector -Mode "WiiM" -Source $Source }
         "None"  {
-            Write-InactiveNowPlaying
+            Write-InactiveNowPlaying -SelectedSource $Source
             $script:ActiveMode = "None"
             $script:ActiveSource = $Source
             Write-Host "$(Get-Date -Format HH:mm:ss) Now Playing hidden for Source=$Source."
@@ -237,7 +293,11 @@ function Set-Mode {
 }
 
 New-Item -ItemType Directory -Path $RouterDirectory -Force | Out-Null
+. (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
 Write-RouterLog "Now Playing Router started. PID=$PID."
+Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'ROUTER_STARTED' -Fields @{
+    statePath = $NowPlayingPath; denonStatusPath = $DenonStatusPath; pollSeconds = $PollSeconds
+}
 Write-RouterHeartbeat
 $script:NextHeartbeat = (Get-Date).AddSeconds($RouterHeartbeatIntervalSeconds)
 
@@ -277,6 +337,16 @@ try {
         $signature = "$source|$desiredMode"
         if ($signature -ne $lastSignature) {
             Write-Host "$(Get-Date -Format HH:mm:ss) Source='$source' -> $desiredMode"
+            $selectionReason = switch ($desiredMode) {
+                'Apple' { 'Denon Source=HTPC' }
+                'WiiM' { 'Denon Source=LYR+' }
+                default { 'source is unsupported or idle' }
+            }
+            Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'ROUTER_SELECTION' -Fields @{
+                activeSource = $source; selectedCollector = $desiredMode
+                reason = $selectionReason; inputSignal = $state.InputSignal; mode = $state.Mode
+                previousSelection = $lastSignature
+            }
             $lastSignature = $signature
         }
 

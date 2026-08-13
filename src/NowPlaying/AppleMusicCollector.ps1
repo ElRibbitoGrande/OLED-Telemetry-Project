@@ -13,6 +13,7 @@ $ArtworkPathB = Join-Path $OutputDirectory 'artwork_b.jpg'
 $PollMilliseconds = 1000
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+. (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 
 function Await-WinRT {
@@ -211,10 +212,15 @@ function Get-AppleMusicSnapshot {
 }
 
 function Write-State {
-    param($Snapshot)
+    param(
+        $Snapshot,
+        [bool]$CollectorFresh = $true,
+        [string]$Reason = 'collector poll succeeded'
+    )
 
     $active = if ($Snapshot.Found -and $Snapshot.Playing) { 1 } else { 0 }
     $parts = Split-AppleMetadata -Artist $Snapshot.Artist -Album $Snapshot.Album
+    $rawArtist = $parts[0]
     $artist = $parts[0]
     $album = $parts[1]
 
@@ -230,6 +236,8 @@ function Write-State {
     if (-not [string]::IsNullOrWhiteSpace($album)) { $script:stableAlbum = $album }
     $artist = $script:stableArtist
     $album = $script:stableAlbum
+    $lastKnownGoodAction = if ([string]::IsNullOrWhiteSpace($rawArtist) -and
+        -not [string]::IsNullOrWhiteSpace($artist)) { 'retained' } else { 'none' }
 
     $trackKey = '{0}|{1}|{2}' -f (Clean-Value $Snapshot.Title), $artist, $album
     if ($active -eq 1) {
@@ -309,8 +317,67 @@ function Write-State {
     )
 
     $temp = "$StatePath.tmp"
-    [System.IO.File]::WriteAllLines($temp, $lines, [System.Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temp -Destination $StatePath -Force
+    try {
+        [System.IO.File]::WriteAllLines($temp, $lines, [System.Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temp -Destination $StatePath -Force
+    }
+    catch {
+        Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'STATE_WRITE_FAILED' -Fields @{
+            active = $active; source = 'Apple Music'; title = (Clean-Value $Snapshot.Title)
+            rawArtist = $rawArtist; artist = $artist; album = $album
+            artworkAvailable = [int]$artworkAvailable; artwork = $script:currentArtwork
+            collectorFresh = $CollectorFresh; lastKnownGoodArtist = $lastKnownGoodAction
+            stateWrite = 'failure'; statePath = $StatePath; exception = $_.Exception.Message
+            reason = $Reason
+        }
+        throw
+    }
+
+    # Keep all post-write diagnostics isolated from the collector's behavior.
+    try {
+        $script:diagnosticSequence++
+        $signature = "$active|$($Snapshot.Title)|$artist|$album|$artworkAvailable|$($script:currentArtwork)"
+        $now = Get-Date
+        if ($signature -ne $script:lastDiagnosticSignature -or $now -ge $script:nextDiagnosticHeartbeat) {
+            $event = if ($signature -ne $script:lastDiagnosticSignature) { 'COLLECTOR_STATE' } else { 'STATE_HEARTBEAT' }
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event $event -Fields @{
+                active = $active; source = 'Apple Music'; sourceIdentity = $Snapshot.SourceApp
+                title = (Clean-Value $Snapshot.Title); rawArtist = $rawArtist; artist = $artist; album = $album
+                artworkAvailable = [int]$artworkAvailable; artwork = $script:currentArtwork
+                collectorFresh = $CollectorFresh; lastKnownGoodArtist = $lastKnownGoodAction
+                stateWrite = 'success'; statePath = $StatePath
+                stateFileTimestamp = (Get-Item -LiteralPath $StatePath).LastWriteTime.ToString('o')
+                sequence = $script:diagnosticSequence; reason = $Reason
+            }
+            $script:lastDiagnosticSignature = $signature
+            $script:nextDiagnosticHeartbeat = $now.AddSeconds(30)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($script:lastPublishedArtist) -and
+            [string]::IsNullOrWhiteSpace($artist)) {
+            $lossEvent = if ($active -eq 1 -or -not $CollectorFresh) { 'ARTIST_LOST' } else { 'ARTIST_CLEARED_INTENTIONAL' }
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event $lossEvent -Fields @{
+                active = $active; source = 'Apple Music'; title = (Clean-Value $Snapshot.Title)
+                previousArtist = $script:lastPublishedArtist; artist = ''; rawArtist = $rawArtist
+                album = $album; lastKnownGoodArtist = $lastKnownGoodAction
+                reason = $Reason; collectorFresh = $CollectorFresh
+                stateWrite = 'success'; sequence = $script:diagnosticSequence
+            }
+            if ($lossEvent -eq 'ARTIST_LOST') { $script:artistLossOutstanding = $true }
+        }
+        elseif ($script:artistLossOutstanding -and -not [string]::IsNullOrWhiteSpace($artist)) {
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'ARTIST_RESTORED' -Fields @{
+                active = $active; source = 'Apple Music'; title = (Clean-Value $Snapshot.Title)
+                previousArtist = $script:lastPublishedArtist; artist = $artist; album = $album
+                stateWrite = 'success'; sequence = $script:diagnosticSequence
+            }
+            $script:artistLossOutstanding = $false
+        }
+        $script:lastPublishedArtist = $artist
+    }
+    catch {
+        # Diagnostics must never affect state publication or the polling loop.
+    }
 }
 
 Write-Log 'Collector v5 with iTunes artwork lookup started.'
@@ -325,16 +392,33 @@ $pendingArtworkTrackKey = ''
 $pendingArtworkFailures = 0
 $nextArtworkAttempt = Get-Date
 $inactivePollCount = 0
+$lastPublishedArtist = ''
+$artistLossOutstanding = $false
+$lastDiagnosticSignature = ''
+$nextDiagnosticHeartbeat = Get-Date
+$diagnosticSequence = 0
+
+Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_STARTED' -Fields @{
+    source = 'Apple Music'; statePath = $StatePath; pollMilliseconds = $PollMilliseconds
+}
 
 while ($true) {
     try {
         $snapshot = Get-AppleMusicSnapshot
         Write-State -Snapshot $snapshot
+        if (-not [string]::IsNullOrWhiteSpace($lastError)) {
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_RECOVERED' -Fields @{
+                source = 'Apple Music'; collectorFresh = $true; previousException = $lastError
+            }
+        }
         $lastError = ''
     }
     catch {
         $message = $_.Exception.Message
         if ($message -ne $lastError) {
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_EXCEPTION' -Fields @{
+                source = 'Apple Music'; collectorFresh = $false; exception = $message
+            }
             Write-Log "Read failure: $message"
             $lastError = $message
         }
@@ -342,7 +426,7 @@ while ($true) {
         Write-State -Snapshot ([pscustomobject]@{
             Found = $false; Playing = $false; Title = ''; Artist = ''; Album = '';
             PositionSeconds = 0L; DurationSeconds = 0L; ArtworkAvailable = $false
-        })
+        }) -CollectorFresh $false -Reason "collector exception: $message"
     }
 
     Start-Sleep -Milliseconds $PollMilliseconds

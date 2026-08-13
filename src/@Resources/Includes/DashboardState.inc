@@ -82,6 +82,14 @@ Measure=String
 String=[DashboardRawArtist]
 DynamicVariables=1
 
+; Hidden forensic probe: compares the raw shared state with AF2's parsed Artist.
+; It writes only transitions, mismatches, and a 30-second heartbeat.
+[DashboardNowPlayingDiagnostic]
+Measure=Script
+ScriptFile=#@#Scripts\NowPlayingDiagnostic.lua
+UpdateDivider=1
+DynamicVariables=1
+
 [DashboardNowPlayingAlbum]
 Measure=String
 String=[DashboardRawAlbum]

@@ -74,10 +74,79 @@ $statusUrl = "https://$WiiMIP/httpapi.asp?command=getPlayerStatus"
 $metaUrl   = "https://$WiiMIP/httpapi.asp?command=getMetaInfo"
 
 New-Item -ItemType Directory -Path $NowPlayingDir -Force | Out-Null
+. (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
 
 $nowPlayingPath = Join-Path $NowPlayingDir "now_playing.txt"
 $artworkPath = Join-Path $NowPlayingDir "wiim_artwork.jpg"
 $lastTrackId = ""
+$lastPublishedArtist = ""
+$artistLossOutstanding = $false
+$lastDiagnosticSignature = ""
+$nextDiagnosticHeartbeat = Get-Date
+$diagnosticSequence = 0
+$lastCollectorError = ""
+
+function Write-WiiMStateDiagnostic {
+    param(
+        [int]$Active,
+        [string]$Source,
+        [string]$Title,
+        [string]$Artist,
+        [string]$Album,
+        [int]$ArtworkAvailable,
+        [string]$Artwork,
+        [bool]$CollectorFresh,
+        [string]$Reason
+    )
+
+    try {
+        $script:diagnosticSequence++
+        $signature = "$Active|$Source|$Title|$Artist|$Album|$ArtworkAvailable|$Artwork"
+        $now = Get-Date
+        if ($signature -ne $script:lastDiagnosticSignature -or $now -ge $script:nextDiagnosticHeartbeat) {
+            $event = if ($signature -ne $script:lastDiagnosticSignature) { 'COLLECTOR_STATE' } else { 'STATE_HEARTBEAT' }
+            Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event $event -Fields @{
+                active = $Active; source = $Source; sourceIdentity = 'LYR+'
+                title = $Title; rawArtist = $Artist; artist = $Artist; album = $Album
+                artworkAvailable = $ArtworkAvailable; artwork = $Artwork
+                collectorFresh = $CollectorFresh; lastKnownGoodArtist = 'none'
+                stateWrite = 'success'; statePath = $nowPlayingPath
+                stateFileTimestamp = (Get-Item -LiteralPath $nowPlayingPath).LastWriteTime.ToString('o')
+                sequence = $script:diagnosticSequence; reason = $Reason
+            }
+            $script:lastDiagnosticSignature = $signature
+            $script:nextDiagnosticHeartbeat = $now.AddSeconds(30)
+        }
+
+    if (-not [string]::IsNullOrWhiteSpace($script:lastPublishedArtist) -and
+        [string]::IsNullOrWhiteSpace($Artist)) {
+        $lossEvent = if ($Active -eq 1 -or -not $CollectorFresh) { 'ARTIST_LOST' } else { 'ARTIST_CLEARED_INTENTIONAL' }
+        Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event $lossEvent -Fields @{
+            active = $Active; source = $Source; sourceIdentity = 'LYR+'; title = $Title
+            previousArtist = $script:lastPublishedArtist; artist = ''; album = $Album
+            lastKnownGoodArtist = 'cleared'; reason = $Reason
+            stateWrite = 'success'; sequence = $script:diagnosticSequence
+        }
+        if ($lossEvent -eq 'ARTIST_LOST') { $script:artistLossOutstanding = $true }
+    }
+    elseif ($script:artistLossOutstanding -and -not [string]::IsNullOrWhiteSpace($Artist)) {
+        Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'ARTIST_RESTORED' -Fields @{
+            active = $Active; source = $Source; sourceIdentity = 'LYR+'; title = $Title
+            previousArtist = $script:lastPublishedArtist; artist = $Artist; album = $Album
+            stateWrite = 'success'; sequence = $script:diagnosticSequence
+        }
+        $script:artistLossOutstanding = $false
+    }
+        $script:lastPublishedArtist = $Artist
+    }
+    catch {
+        # Diagnostics must never affect state publication or the polling loop.
+    }
+}
+
+Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'COLLECTOR_STARTED' -Fields @{
+    source = 'WiiM'; sourceIdentity = 'LYR+'; statePath = $nowPlayingPath; pollSeconds = $PollSeconds
+}
 
 Write-Host "Polling WiiM at $WiiMIP every $PollSeconds seconds."
 Write-Host "Writing Rainmeter-compatible output to:"
@@ -167,10 +236,30 @@ while ($true) {
         ) -join "`r`n"
 
         Write-AtomicText -Path $nowPlayingPath -Content $content
+        Write-WiiMStateDiagnostic -Active $active -Source $source -Title (Escape-LineValue $title) `
+            -Artist (Escape-LineValue $artist) -Album (Escape-LineValue $album) `
+            -ArtworkAvailable $artworkAvailable `
+            -Artwork $(if ($artworkAvailable -eq 1) { $artworkPath } else { '' }) `
+            -CollectorFresh $true -Reason 'WiiM query succeeded'
+        if (-not [string]::IsNullOrWhiteSpace($lastCollectorError)) {
+            Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'COLLECTOR_RECOVERED' -Fields @{
+                source = $source; sourceIdentity = 'LYR+'; collectorFresh = $true
+                previousException = $lastCollectorError
+            }
+            $lastCollectorError = ''
+        }
 
         Write-Host ("{0} | {1} - {2}" -f (Get-Date -Format "HH:mm:ss"), $artist, $title)
     }
     catch {
+        $failureMessage = $_.Exception.Message
+        if ($failureMessage -ne $lastCollectorError) {
+            Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'COLLECTOR_EXCEPTION' -Fields @{
+                source = 'WiiM'; sourceIdentity = 'LYR+'; collectorFresh = $false
+                exception = $failureMessage
+            }
+            $lastCollectorError = $failureMessage
+        }
         $content = @(
             "Active=0"
             "Source=WiiM"
@@ -187,8 +276,21 @@ while ($true) {
             ""
         ) -join "`r`n"
 
-        Write-AtomicText -Path $nowPlayingPath -Content $content
-        Write-Warning "WiiM query failed: $($_.Exception.Message)"
+        try {
+            Write-AtomicText -Path $nowPlayingPath -Content $content
+            Write-WiiMStateDiagnostic -Active 0 -Source 'WiiM' -Title '' -Artist '' -Album '' `
+                -ArtworkAvailable 0 -Artwork '' -CollectorFresh $false `
+                -Reason "WiiM query failed: $failureMessage"
+        }
+        catch {
+            Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'STATE_WRITE_FAILED' -Fields @{
+                active = 0; source = 'WiiM'; sourceIdentity = 'LYR+'; title = ''; artist = ''; album = ''
+                collectorFresh = $false; stateWrite = 'failure'; statePath = $nowPlayingPath
+                exception = $_.Exception.Message; collectorException = $failureMessage
+            }
+            throw
+        }
+        Write-Warning "WiiM query failed: $failureMessage"
     }
 
     Start-Sleep -Seconds $PollSeconds

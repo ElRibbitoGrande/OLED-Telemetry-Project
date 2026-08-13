@@ -410,6 +410,7 @@ $hashPaths = @(
     "RestartTelemetry.cmd"
     "Analog_Floating.ini"
     "NowPlaying\NowPlayingRouter.ps1"
+    "NowPlaying\NowPlayingDiagnostic.ps1"
     "NowPlaying\AppleMusicCollector.ps1"
     "NowPlaying\WiiM-NowPlaying-Bridge.ps1"
 )
