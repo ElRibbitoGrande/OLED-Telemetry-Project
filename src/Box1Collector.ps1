@@ -18,6 +18,8 @@ $ReadTimeoutMilliseconds = 750
 $ValidationTimeoutSeconds = 6
 $ReconnectDelaySeconds = 2
 $HeartbeatIntervalSeconds = 2
+$PublisherShutdownTimeoutSeconds = 5
+$SerialReadBufferBytes = 65536
 $FirmwareBannerPattern = '^BOX1 (?<Version>[0-9]+(?:\.[0-9]+)+)$'
 $ExpectedReadyLine = 'TELEMETRY READY'
 $PicoCdcPnpPattern = '(?i)^USB\\VID_2E8A&PID_0009&MI_00\\'
@@ -49,13 +51,6 @@ function Write-AtomicText {
 
     [IO.File]::WriteAllText($TempPath, $Content, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $TempPath -Destination $Path -Force
-}
-
-function Write-Heartbeat {
-    Write-AtomicText `
-        -Path $HeartbeatFile `
-        -TempPath $HeartbeatTempFile `
-        -Content (Get-Date -Format 'o')
 }
 
 function Write-CollectorError {
@@ -123,6 +118,7 @@ function New-Box1SerialPort {
     $serialPort.Handshake = [IO.Ports.Handshake]::None
     $serialPort.ReadTimeout = $ReadTimeoutMilliseconds
     $serialPort.WriteTimeout = $ReadTimeoutMilliseconds
+    $serialPort.ReadBufferSize = $SerialReadBufferBytes
     $serialPort.NewLine = "`n"
     $serialPort.DtrEnable = $true
     $serialPort.RtsEnable = $true
@@ -226,65 +222,154 @@ function Convert-TelemetryLine {
     }
 }
 
-function Format-DbValue {
-    param([Parameter(Mandatory)][double]$Value)
-    return $Value.ToString('0.0############', $InvariantCulture)
-}
-
-function Format-LevelValue {
-    param([Parameter(Mandatory)][double]$Value)
-    return $Value.ToString('0.000000', $InvariantCulture)
-}
-
-function Publish-Box1State {
+$PublisherScript = {
     param(
-        [Parameter(Mandatory)]$Telemetry,
-        [Parameter(Mandatory)][string]$ActualPortName,
-        [Parameter(Mandatory)][string]$Firmware,
-        [Parameter(Mandatory)][long]$Sequence
+        [Parameter(Mandatory)][hashtable]$SharedState,
+        [Parameter(Mandatory)][Threading.AutoResetEvent]$PublishSignal,
+        [Parameter(Mandatory)][string]$PublisherStateFile,
+        [Parameter(Mandatory)][string]$PublisherStateTempFile,
+        [Parameter(Mandatory)][string]$PublisherHeartbeatFile,
+        [Parameter(Mandatory)][string]$PublisherHeartbeatTempFile,
+        [Parameter(Mandatory)][string]$PublisherErrorFile,
+        [Parameter(Mandatory)][string]$PublisherErrorTempFile,
+        [Parameter(Mandatory)][int]$PublisherHeartbeatIntervalSeconds
     )
 
-    $leftLevel = Convert-DbfsToLevel -Dbfs $Telemetry.LeftVuDb
-    $rightLevel = Convert-DbfsToLevel -Dbfs $Telemetry.RightVuDb
+    $ErrorActionPreference = 'Stop'
+    $publisherCulture = [Globalization.CultureInfo]::InvariantCulture
+    $lastPublishedSequence = -1L
+    $statePublicationFailed = $false
+    $nextHeartbeat = [DateTime]::UtcNow
 
-    $lines = @(
-        'Device=BOX1'
-        "Firmware=$Firmware"
-        "Port=$ActualPortName"
-        'Connected=1'
-        'Ready=1'
-        "LeftRmsDb=$(Format-DbValue $Telemetry.LeftRmsDb)"
-        "LeftPeakDb=$(Format-DbValue $Telemetry.LeftPeakDb)"
-        "LeftVuDb=$(Format-DbValue $Telemetry.LeftVuDb)"
-        "RightRmsDb=$(Format-DbValue $Telemetry.RightRmsDb)"
-        "RightPeakDb=$(Format-DbValue $Telemetry.RightPeakDb)"
-        "RightVuDb=$(Format-DbValue $Telemetry.RightVuDb)"
-        "LeftLevel=$(Format-LevelValue $leftLevel)"
-        "RightLevel=$(Format-LevelValue $rightLevel)"
-        "Sequence=$Sequence"
-        "Updated=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')"
-        ''
-    ) -join "`r`n"
+    function Write-PublisherAtomicText {
+        param(
+            [Parameter(Mandatory)][string]$Path,
+            [Parameter(Mandatory)][string]$TempPath,
+            [Parameter(Mandatory)][string]$Content
+        )
 
-    Write-AtomicText -Path $StateFile -TempPath $StateTempFile -Content $lines
+        [IO.File]::WriteAllText($TempPath, $Content, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $TempPath -Destination $Path -Force
+    }
+
+    function Write-PublisherError {
+        param([Parameter(Mandatory)][string]$Message)
+
+        try {
+            $content = '{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $Message
+            Write-PublisherAtomicText `
+                -Path $PublisherErrorFile `
+                -TempPath $PublisherErrorTempFile `
+                -Content $content
+        }
+        catch {}
+    }
+
+    while (-not [bool]$SharedState.Stop) {
+        $now = [DateTime]::UtcNow
+        if ($now -ge $nextHeartbeat) {
+            try {
+                Write-PublisherAtomicText `
+                    -Path $PublisherHeartbeatFile `
+                    -TempPath $PublisherHeartbeatTempFile `
+                    -Content (Get-Date -Format 'o')
+            }
+            catch {
+                Write-PublisherError -Message "Box 1 heartbeat publication failed. $($_.Exception.Message)"
+            }
+            $nextHeartbeat = $now.AddSeconds($PublisherHeartbeatIntervalSeconds)
+        }
+
+        $sample = $SharedState.LatestSample
+        if ($null -ne $sample -and [long]$sample.Sequence -gt $lastPublishedSequence) {
+            try {
+                $lines = @(
+                    'Device=BOX1'
+                    "Firmware=$($sample.Firmware)"
+                    "Port=$($sample.Port)"
+                    'Connected=1'
+                    'Ready=1'
+                    "LeftRmsDb=$($sample.LeftRmsDb.ToString('0.0############', $publisherCulture))"
+                    "LeftPeakDb=$($sample.LeftPeakDb.ToString('0.0############', $publisherCulture))"
+                    "LeftVuDb=$($sample.LeftVuDb.ToString('0.0############', $publisherCulture))"
+                    "RightRmsDb=$($sample.RightRmsDb.ToString('0.0############', $publisherCulture))"
+                    "RightPeakDb=$($sample.RightPeakDb.ToString('0.0############', $publisherCulture))"
+                    "RightVuDb=$($sample.RightVuDb.ToString('0.0############', $publisherCulture))"
+                    "LeftLevel=$($sample.LeftLevel.ToString('0.000000', $publisherCulture))"
+                    "RightLevel=$($sample.RightLevel.ToString('0.000000', $publisherCulture))"
+                    "Sequence=$($sample.Sequence)"
+                    "Updated=$($sample.ReceiptTimestamp.ToString('yyyy-MM-dd HH:mm:ss.fff', $publisherCulture))"
+                    ''
+                ) -join "`r`n"
+
+                Write-PublisherAtomicText `
+                    -Path $PublisherStateFile `
+                    -TempPath $PublisherStateTempFile `
+                    -Content $lines
+                $lastPublishedSequence = [long]$sample.Sequence
+
+                if ($statePublicationFailed) {
+                    Remove-Item -LiteralPath $PublisherErrorFile -Force -ErrorAction SilentlyContinue
+                    Remove-Item -LiteralPath $PublisherErrorTempFile -Force -ErrorAction SilentlyContinue
+                    $statePublicationFailed = $false
+                }
+            }
+            catch {
+                $statePublicationFailed = $true
+                Write-PublisherError -Message "Box 1 state publication failed. $($_.Exception.Message)"
+            }
+
+            # Recheck immediately. Samples received during publication are coalesced
+            # into the newest available sample without delaying serial acquisition.
+            continue
+        }
+
+        $millisecondsUntilHeartbeat = [Math]::Ceiling(
+            ($nextHeartbeat - [DateTime]::UtcNow).TotalMilliseconds
+        )
+        $waitMilliseconds = [int][Math]::Max(
+            1,
+            [Math]::Min([int]::MaxValue, $millisecondsUntilHeartbeat)
+        )
+        [void]$PublishSignal.WaitOne($waitMilliseconds)
+    }
 }
 
 $sequence = Get-InitialSequence
 $connection = $null
-$nextHeartbeat = Get-Date
+$publisherState = [hashtable]::Synchronized(@{
+    Stop = $false
+    LatestSample = $null
+})
+$publisherSignal = [Threading.AutoResetEvent]::new($false)
+$publisherRunspace = $null
+$publisherPowerShell = $null
+$publisherAsyncResult = $null
 
 try {
+    $publisherRunspace = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $publisherRunspace.Open()
+
+    $publisherPowerShell = [PowerShell]::Create()
+    $publisherPowerShell.Runspace = $publisherRunspace
+    [void]$publisherPowerShell.AddScript($PublisherScript.ToString())
+    [void]$publisherPowerShell.AddArgument($publisherState)
+    [void]$publisherPowerShell.AddArgument($publisherSignal)
+    [void]$publisherPowerShell.AddArgument($StateFile)
+    [void]$publisherPowerShell.AddArgument($StateTempFile)
+    [void]$publisherPowerShell.AddArgument($HeartbeatFile)
+    [void]$publisherPowerShell.AddArgument($HeartbeatTempFile)
+    [void]$publisherPowerShell.AddArgument($ErrorFile)
+    [void]$publisherPowerShell.AddArgument($ErrorTempFile)
+    [void]$publisherPowerShell.AddArgument($HeartbeatIntervalSeconds)
+    $publisherAsyncResult = $publisherPowerShell.BeginInvoke()
+
     while ($true) {
         try {
             if ($null -eq $connection -or -not $connection.Port.IsOpen) {
                 $connection = Open-ValidatedBox1Port
                 Clear-CollectorError
                 Write-Host "$(Get-Date -Format HH:mm:ss) Connected to Box 1 on $($connection.PortName)."
-            }
-
-            if ((Get-Date) -ge $nextHeartbeat) {
-                Write-Heartbeat
-                $nextHeartbeat = (Get-Date).AddSeconds($HeartbeatIntervalSeconds)
             }
 
             $line = Read-SerialLine -SerialPort $connection.Port
@@ -300,17 +385,26 @@ try {
                 throw 'Box 1 sequence reached Int64 maximum.'
             }
             $sequence++
-            Publish-Box1State `
-                -Telemetry $telemetry `
-                -ActualPortName $connection.PortName `
-                -Firmware $connection.Firmware `
-                -Sequence $sequence
-            Clear-CollectorError
+
+            $publisherState.LatestSample = [pscustomobject]@{
+                Firmware = $connection.Firmware
+                Port = $connection.PortName
+                LeftRmsDb = $telemetry.LeftRmsDb
+                LeftPeakDb = $telemetry.LeftPeakDb
+                LeftVuDb = $telemetry.LeftVuDb
+                RightRmsDb = $telemetry.RightRmsDb
+                RightPeakDb = $telemetry.RightPeakDb
+                RightVuDb = $telemetry.RightVuDb
+                LeftLevel = Convert-DbfsToLevel -Dbfs $telemetry.LeftVuDb
+                RightLevel = Convert-DbfsToLevel -Dbfs $telemetry.RightVuDb
+                Sequence = $sequence
+                ReceiptTimestamp = [DateTime]::Now
+            }
+            [void]$publisherSignal.Set()
         }
         catch {
             $message = $_.Exception.Message
             try { Write-CollectorError -Message $message } catch {}
-            try { Write-Heartbeat } catch {}
 
             if ($null -ne $connection) {
                 try { if ($connection.Port.IsOpen) { $connection.Port.Close() } } catch {}
@@ -320,7 +414,6 @@ try {
 
             Write-Warning "Box 1 collector reconnecting: $message"
             Start-Sleep -Seconds $ReconnectDelaySeconds
-            $nextHeartbeat = Get-Date
         }
     }
 }
@@ -329,6 +422,27 @@ finally {
         try { if ($connection.Port.IsOpen) { $connection.Port.Close() } } catch {}
         try { $connection.Port.Dispose() } catch {}
     }
+
+    $publisherState.Stop = $true
+    [void]$publisherSignal.Set()
+
+    if ($null -ne $publisherAsyncResult) {
+        $publisherStopped = $publisherAsyncResult.AsyncWaitHandle.WaitOne(
+            [TimeSpan]::FromSeconds($PublisherShutdownTimeoutSeconds)
+        )
+        if (-not $publisherStopped -and $null -ne $publisherPowerShell) {
+            try { $publisherPowerShell.Stop() } catch {}
+        }
+        if ($null -ne $publisherPowerShell) {
+            try { $publisherPowerShell.EndInvoke($publisherAsyncResult) } catch {}
+        }
+        try { $publisherAsyncResult.AsyncWaitHandle.Dispose() } catch {}
+    }
+
+    if ($null -ne $publisherPowerShell) { $publisherPowerShell.Dispose() }
+    if ($null -ne $publisherRunspace) { $publisherRunspace.Dispose() }
+    $publisherSignal.Dispose()
+
     try { $singleInstanceMutex.ReleaseMutex() } catch {}
     $singleInstanceMutex.Dispose()
 }

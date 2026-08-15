@@ -188,7 +188,7 @@ DynamicVariables=1
 Measure=WebParser
 URL=file://#DashboardInputBox1StatePath#
 RegExp=(?s)Connected=([01])\r?\n.*Ready=([01])\r?\n.*LeftRmsDb=(-?[0-9]+(?:\.[0-9]+)?)\r?\n.*RightRmsDb=(-?[0-9]+(?:\.[0-9]+)?)\r?\n.*LeftLevel=([0-9]+(?:\.[0-9]+)?)\r?\nRightLevel=([0-9]+(?:\.[0-9]+)?)\r?\nSequence=([0-9]+)\r?\nUpdated=([^\r\n]+)
-UpdateRate=3
+UpdateRate=1
 DynamicVariables=1
 
 [DashboardRawBox1Connected]
