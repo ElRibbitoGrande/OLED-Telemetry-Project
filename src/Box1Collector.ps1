@@ -18,9 +18,8 @@ $ReadTimeoutMilliseconds = 750
 $ValidationTimeoutSeconds = 6
 $ReconnectDelaySeconds = 2
 $HeartbeatIntervalSeconds = 2
-$ExpectedBanner = 'BOX1 0.17'
+$FirmwareBannerPattern = '^BOX1 (?<Version>[0-9]+(?:\.[0-9]+)+)$'
 $ExpectedReadyLine = 'TELEMETRY READY'
-$ExpectedFirmware = '0.17'
 $PicoCdcPnpPattern = '(?i)^USB\\VID_2E8A&PID_0009&MI_00\\'
 $InvariantCulture = [Globalization.CultureInfo]::InvariantCulture
 
@@ -160,7 +159,7 @@ function Open-ValidatedBox1Port {
             $serialPort = New-Box1SerialPort -Name $candidate
             $serialPort.Open()
 
-            $sawBanner = $false
+            $detectedFirmware = $null
             $sawReady = $false
             $deadline = (Get-Date).AddSeconds($ValidationTimeoutSeconds)
 
@@ -168,23 +167,23 @@ function Open-ValidatedBox1Port {
                 $line = Read-SerialLine -SerialPort $serialPort
                 if ($null -eq $line) { continue }
 
-                if ($line -eq $ExpectedBanner) {
-                    $sawBanner = $true
+                if ($line -cmatch $FirmwareBannerPattern) {
+                    $detectedFirmware = $Matches.Version
                 }
                 elseif ($line -eq $ExpectedReadyLine) {
                     $sawReady = $true
                 }
 
-                if ($sawBanner -and $sawReady) {
+                if ($null -ne $detectedFirmware -and $sawReady) {
                     return [pscustomobject]@{
                         Port = $serialPort
                         PortName = $candidate
-                        Firmware = $ExpectedFirmware
+                        Firmware = $detectedFirmware
                     }
                 }
             }
 
-            throw "Expected '$ExpectedBanner' and '$ExpectedReadyLine' were not both received within $ValidationTimeoutSeconds seconds."
+            throw "A valid 'BOX1 <version>' banner and '$ExpectedReadyLine' were not both received within $ValidationTimeoutSeconds seconds."
         }
         catch {
             $failures.Add("$candidate`: $($_.Exception.Message)")
@@ -292,7 +291,7 @@ try {
             if ($null -eq $line) { continue }
 
             # Startup banners may reappear if the device resets while the port remains open.
-            if ($line -eq $ExpectedBanner -or $line -eq $ExpectedReadyLine) { continue }
+            if ($line -cmatch $FirmwareBannerPattern -or $line -eq $ExpectedReadyLine) { continue }
 
             $telemetry = Convert-TelemetryLine -Line $line
             if ($null -eq $telemetry) { continue }
