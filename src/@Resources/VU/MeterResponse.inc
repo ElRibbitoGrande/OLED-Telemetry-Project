@@ -3,14 +3,14 @@
 
 [DashboardVUDisplayLeft]
 Measure=Calc
-Formula=DashboardVURawLeft * DashboardLevelSourceCode
+Formula=(DashboardBox1Usable ? DashboardBox1LeftLevel : (DashboardVURawLeft * DashboardLevelSourceCode))
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1
 
 [DashboardVUDisplayRight]
 Measure=Calc
-Formula=DashboardVURawRight * DashboardLevelSourceCode
+Formula=(DashboardBox1Usable ? DashboardBox1RightLevel : (DashboardVURawRight * DashboardLevelSourceCode))
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1

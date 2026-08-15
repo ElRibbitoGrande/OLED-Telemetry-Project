@@ -17,6 +17,47 @@ Measure=String
 String=[DashboardRawSource]
 DynamicVariables=1
 
+[DashboardBox1SourceGate]
+Measure=String
+String=[DashboardRawSource]
+IfMatch=^LYR\+$
+IfMatchAction=[!SetVariable DashboardBox1SourceActive 1]
+IfNotMatchAction=[!SetVariable DashboardBox1SourceActive 0]
+DynamicVariables=1
+
+[DashboardBox1Clock]
+Measure=Uptime
+
+[DashboardBox1Sequence]
+Measure=Calc
+Formula=DashboardRawBox1Sequence
+OnChangeAction=[!SetVariable DashboardBox1LastSequenceTime "[DashboardBox1Clock:]"]
+DynamicVariables=1
+
+[DashboardBox1Fresh]
+Measure=Calc
+Formula=((DashboardBox1Clock - #DashboardBox1LastSequenceTime#) < 5 ? 1 : 0)
+DynamicVariables=1
+
+[DashboardBox1LeftLevel]
+Measure=Calc
+Formula=DashboardRawBox1LeftLevel
+MinValue=0
+MaxValue=1
+DynamicVariables=1
+
+[DashboardBox1RightLevel]
+Measure=Calc
+Formula=DashboardRawBox1RightLevel
+MinValue=0
+MaxValue=1
+DynamicVariables=1
+
+[DashboardBox1Usable]
+Measure=Calc
+Formula=((#DashboardBox1SourceActive# = 1) && (DashboardRawBox1Connected = 1) && (DashboardRawBox1Ready = 1) && (DashboardBox1LeftLevel >= 0) && (DashboardBox1LeftLevel <= 1) && (DashboardBox1RightLevel >= 0) && (DashboardBox1RightLevel <= 1) && (DashboardBox1Fresh = 1) ? 1 : 0)
+DynamicVariables=1
+
 [DashboardAudioFormat]
 Measure=String
 String=[DashboardRawInputSignal]
