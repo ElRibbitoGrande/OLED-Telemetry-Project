@@ -241,6 +241,36 @@ $PublisherScript = {
     $statePublicationFailed = $false
     $nextHeartbeat = [DateTime]::UtcNow
 
+    if (-not ('Box1Collector.NativeMethods' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Box1Collector
+{
+    public static class NativeMethods
+    {
+        [DllImport(
+            "kernel32.dll",
+            EntryPoint = "ReplaceFileW",
+            CharSet = CharSet.Unicode,
+            ExactSpelling = true,
+            SetLastError = true
+        )]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ReplaceFileW(
+            string replacedFileName,
+            string replacementFileName,
+            IntPtr backupFileName,
+            uint replaceFlags,
+            IntPtr exclude,
+            IntPtr reserved
+        );
+    }
+}
+'@
+    }
+
     function Write-PublisherAtomicText {
         param(
             [Parameter(Mandatory)][string]$Path,
@@ -255,7 +285,27 @@ $PublisherScript = {
         )
 
         if ([System.IO.File]::Exists($Path)) {
-            [System.IO.File]::Replace($TempPath, $Path, $null)
+            $replaceSucceeded = [Box1Collector.NativeMethods]::ReplaceFileW(
+                $Path,
+                $TempPath,
+                [IntPtr]::Zero,
+                [uint32]0,
+                [IntPtr]::Zero,
+                [IntPtr]::Zero
+            )
+
+            if (-not $replaceSucceeded) {
+                $nativeErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                $nativeError = [System.ComponentModel.Win32Exception]::new($nativeErrorCode)
+
+                throw [System.ComponentModel.Win32Exception]::new(
+                    $nativeErrorCode,
+                    (
+                        "ReplaceFileW failed replacing '{0}' with '{1}' " +
+                        "(Win32 error {2}: {3})"
+                    ) -f $Path, $TempPath, $nativeErrorCode, $nativeError.Message
+                )
+            }
         }
         else {
             [System.IO.File]::Move($TempPath, $Path)
