@@ -53,9 +53,23 @@ MinValue=0
 MaxValue=1
 DynamicVariables=1
 
+[DashboardBox1LeftRmsLevel]
+Measure=Calc
+Formula=Clamp(10 ** (DashboardRawBox1LeftRmsDb / 20), 0, 1)
+MinValue=0
+MaxValue=1
+DynamicVariables=1
+
+[DashboardBox1RightRmsLevel]
+Measure=Calc
+Formula=Clamp(10 ** (DashboardRawBox1RightRmsDb / 20), 0, 1)
+MinValue=0
+MaxValue=1
+DynamicVariables=1
+
 [DashboardBox1Usable]
 Measure=Calc
-Formula=((#DashboardBox1SourceActive# = 1) && (DashboardRawBox1Connected = 1) && (DashboardRawBox1Ready = 1) && (DashboardBox1LeftLevel >= 0) && (DashboardBox1LeftLevel <= 1) && (DashboardBox1RightLevel >= 0) && (DashboardBox1RightLevel <= 1) && (DashboardBox1Fresh = 1) ? 1 : 0)
+Formula=((#DashboardBox1SourceActive# = 1) && (DashboardRawBox1Connected = 1) && (DashboardRawBox1Ready = 1) && (DashboardBox1LeftRmsLevel >= 0) && (DashboardBox1LeftRmsLevel <= 1) && (DashboardBox1RightRmsLevel >= 0) && (DashboardBox1RightRmsLevel <= 1) && (DashboardBox1Fresh = 1) ? 1 : 0)
 DynamicVariables=1
 
 [DashboardAudioFormat]

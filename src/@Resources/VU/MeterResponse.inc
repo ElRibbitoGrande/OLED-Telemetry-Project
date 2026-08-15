@@ -2,17 +2,27 @@
 ; Requires DashboardState.inc and the selected meter response variables.
 
 [DashboardBox1VUSmoothedLeft]
-Measure=Calc
-Formula=Clamp(DashboardBox1LeftLevel * #DashboardVUGain#, 0, 1)
-AverageSize=1
+Measure=Script
+ScriptFile=#@#VU\Box1VUResponse.lua
+InputMeasure=DashboardBox1LeftRmsLevel
+AttackMs=#DashboardVUAttack#
+DecayMs=#DashboardVUDecay#
+Gain=#DashboardVUGain#
+UpdateMs=32
+UpdateDivider=1
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1
 
 [DashboardBox1VUSmoothedRight]
-Measure=Calc
-Formula=Clamp(DashboardBox1RightLevel * #DashboardVUGain#, 0, 1)
-AverageSize=1
+Measure=Script
+ScriptFile=#@#VU\Box1VUResponse.lua
+InputMeasure=DashboardBox1RightRmsLevel
+AttackMs=#DashboardVUAttack#
+DecayMs=#DashboardVUDecay#
+Gain=#DashboardVUGain#
+UpdateMs=32
+UpdateDivider=1
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1

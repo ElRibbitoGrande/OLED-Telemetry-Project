@@ -187,7 +187,7 @@ DynamicVariables=1
 [DashboardBox1StateFile]
 Measure=WebParser
 URL=file://#DashboardInputBox1StatePath#
-RegExp=(?s)Connected=([01])\r?\n.*Ready=([01])\r?\n.*LeftLevel=([0-9]+(?:\.[0-9]+)?)\r?\nRightLevel=([0-9]+(?:\.[0-9]+)?)\r?\nSequence=([0-9]+)\r?\nUpdated=([^\r\n]+)
+RegExp=(?s)Connected=([01])\r?\n.*Ready=([01])\r?\n.*LeftRmsDb=(-?[0-9]+(?:\.[0-9]+)?)\r?\n.*RightRmsDb=(-?[0-9]+(?:\.[0-9]+)?)\r?\n.*LeftLevel=([0-9]+(?:\.[0-9]+)?)\r?\nRightLevel=([0-9]+(?:\.[0-9]+)?)\r?\nSequence=([0-9]+)\r?\nUpdated=([^\r\n]+)
 UpdateRate=3
 DynamicVariables=1
 
@@ -203,28 +203,40 @@ URL=[DashboardBox1StateFile]
 StringIndex=2
 DynamicVariables=1
 
-[DashboardRawBox1LeftLevel]
+[DashboardRawBox1LeftRmsDb]
 Measure=WebParser
 URL=[DashboardBox1StateFile]
 StringIndex=3
 DynamicVariables=1
 
-[DashboardRawBox1RightLevel]
+[DashboardRawBox1RightRmsDb]
 Measure=WebParser
 URL=[DashboardBox1StateFile]
 StringIndex=4
 DynamicVariables=1
 
-[DashboardRawBox1Sequence]
+[DashboardRawBox1LeftLevel]
 Measure=WebParser
 URL=[DashboardBox1StateFile]
 StringIndex=5
 DynamicVariables=1
 
-[DashboardRawBox1Updated]
+[DashboardRawBox1RightLevel]
 Measure=WebParser
 URL=[DashboardBox1StateFile]
 StringIndex=6
+DynamicVariables=1
+
+[DashboardRawBox1Sequence]
+Measure=WebParser
+URL=[DashboardBox1StateFile]
+StringIndex=7
+DynamicVariables=1
+
+[DashboardRawBox1Updated]
+Measure=WebParser
+URL=[DashboardBox1StateFile]
+StringIndex=8
 DynamicVariables=1
 
 [DashboardNowPlayingStateFile]
