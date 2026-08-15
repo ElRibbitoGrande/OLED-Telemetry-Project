@@ -4,7 +4,7 @@
 [DashboardBox1VUSmoothedLeft]
 Measure=Calc
 Formula=Clamp(DashboardBox1LeftLevel * #DashboardVUGain#, 0, 1)
-AverageSize=2
+AverageSize=1
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1
@@ -12,7 +12,7 @@ DynamicVariables=1
 [DashboardBox1VUSmoothedRight]
 Measure=Calc
 Formula=Clamp(DashboardBox1RightLevel * #DashboardVUGain#, 0, 1)
-AverageSize=2
+AverageSize=1
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1
