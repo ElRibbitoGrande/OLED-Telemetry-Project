@@ -248,8 +248,18 @@ $PublisherScript = {
             [Parameter(Mandatory)][string]$Content
         )
 
-        [IO.File]::WriteAllText($TempPath, $Content, [Text.UTF8Encoding]::new($false))
-        Move-Item -LiteralPath $TempPath -Destination $Path -Force
+        [System.IO.File]::WriteAllText(
+            $TempPath,
+            $Content,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        if ([System.IO.File]::Exists($Path)) {
+            [System.IO.File]::Replace($TempPath, $Path, $null)
+        }
+        else {
+            [System.IO.File]::Move($TempPath, $Path)
+        }
     }
 
     function Write-PublisherError {
