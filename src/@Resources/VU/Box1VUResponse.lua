@@ -1,9 +1,10 @@
 local inputMeasure
-local output = 0
+local rmsPower = 0
 local attackMs = 85
 local decayMs = 520
 local gain = 2.7
 local updateMs = 32
+local log10OnePercent = -2
 
 local function getNumberOption(name, fallback)
     local value = tonumber(SELF:GetOption(name, tostring(fallback)))
@@ -22,11 +23,11 @@ local function clamp(value)
     return value
 end
 
-local function responseAlpha(responseMs)
+local function responseCoefficient(responseMs)
     if responseMs <= 0 then
-        return 1
+        return 0
     end
-    return 1 - math.exp(-updateMs / responseMs)
+    return math.exp(log10OnePercent * updateMs / responseMs)
 end
 
 function Initialize()
@@ -35,7 +36,7 @@ function Initialize()
     decayMs = math.max(0, getNumberOption('DecayMs', 520))
     gain = math.max(0, getNumberOption('Gain', 2.7))
     updateMs = math.max(1, getNumberOption('UpdateMs', 32))
-    output = 0
+    rmsPower = 0
 end
 
 function Update()
@@ -43,13 +44,15 @@ function Update()
     if inputMeasure ~= nil then
         target = tonumber(inputMeasure:GetValue()) or 0
     end
-    target = clamp(target * gain)
+    target = clamp(target)
+    local targetPower = target * target
 
-    local responseMs = decayMs
-    if target > output then
-        responseMs = 0
+    local responseMs = attackMs
+    if targetPower < rmsPower then
+        responseMs = decayMs
     end
 
-    output = clamp(output + ((target - output) * responseAlpha(responseMs)))
-    return output
+    local coefficient = responseCoefficient(responseMs)
+    rmsPower = targetPower + coefficient * (rmsPower - targetPower)
+    return clamp(math.sqrt(math.max(0, rmsPower)) * gain)
 end
