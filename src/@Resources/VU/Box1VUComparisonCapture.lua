@@ -131,6 +131,9 @@ end
 
 function Update()
     if not active then
+        Initialize()
+    end
+    if not active then
         return 0
     end
 
