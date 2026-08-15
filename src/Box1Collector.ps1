@@ -19,7 +19,11 @@ $ValidationTimeoutSeconds = 6
 $ReconnectDelaySeconds = 2
 $HeartbeatIntervalSeconds = 2
 $PublisherShutdownTimeoutSeconds = 5
+$DiagnosticShutdownTimeoutSeconds = 5
 $SerialReadBufferBytes = 65536
+$DiagnosticControlFile = 'C:\OLED-Telemetry-Project\diagnostics\Box1VUComparison.capture'
+$DiagnosticCaptureRoot = 'C:\OLED-Telemetry-Project\diagnostics\captures'
+$DiagnosticControlEventName = 'Local\RainmeterDenonBox1VUComparisonControl'
 $FirmwareBannerPattern = '^BOX1 (?<Version>[0-9]+(?:\.[0-9]+)+)$'
 $ExpectedReadyLine = 'TELEMETRY READY'
 $PicoCdcPnpPattern = '(?i)^USB\\VID_2E8A&PID_0009&MI_00\\'
@@ -395,6 +399,194 @@ namespace Box1Collector
     }
 }
 
+$DiagnosticWriterScript = {
+    param(
+        [Parameter(Mandatory)][hashtable]$DiagnosticState,
+        [Parameter(Mandatory)]$DiagnosticQueue,
+        [Parameter(Mandatory)][Threading.AutoResetEvent]$DiagnosticSignal,
+        [Parameter(Mandatory)][Threading.EventWaitHandle]$DiagnosticControlSignal,
+        [Parameter(Mandatory)][string]$ControlFile,
+        [Parameter(Mandatory)][string]$CaptureRoot
+    )
+
+    $ErrorActionPreference = 'Stop'
+    $diagnosticCulture = [Globalization.CultureInfo]::InvariantCulture
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    $captureRootFull = [IO.Path]::GetFullPath($CaptureRoot).TrimEnd('\') + '\'
+    $activeCaptureId = $null
+    $captureDirectory = $null
+    $writer = $null
+    $recordsWritten = 0L
+    $request = $null
+
+    function Get-CaptureRequest {
+        if (-not [IO.File]::Exists($ControlFile)) { return $null }
+
+        try {
+            $values = @{}
+            foreach ($line in [IO.File]::ReadAllLines($ControlFile)) {
+                if ($line -match '^([^=]+)=(.*)$') {
+                    $values[$Matches[1]] = $Matches[2]
+                }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($values.CaptureId) -or
+                [string]::IsNullOrWhiteSpace($values.CaptureDirectory)) {
+                return $null
+            }
+
+            $directory = [IO.Path]::GetFullPath($values.CaptureDirectory)
+            if (-not $directory.StartsWith($captureRootFull, [StringComparison]::OrdinalIgnoreCase) -or
+                -not [IO.Directory]::Exists($directory)) {
+                return $null
+            }
+
+            return [pscustomobject]@{
+                CaptureId = [string]$values.CaptureId
+                CaptureDirectory = $directory
+            }
+        }
+        catch {
+            return $null
+        }
+    }
+
+    function Write-CaptureRecord {
+        param([Parameter(Mandatory)][object[]]$Record)
+
+        $timestamp = [DateTime]$Record[1]
+        $fields = @(
+            $timestamp.ToUniversalTime().Ticks.ToString($diagnosticCulture)
+            $timestamp.ToString('o', $diagnosticCulture)
+            ([long]$Record[2]).ToString($diagnosticCulture)
+            ([double]$Record[3]).ToString('0.0############', $diagnosticCulture)
+            ([double]$Record[4]).ToString('0.0############', $diagnosticCulture)
+            ([double]$Record[5]).ToString('0.0############', $diagnosticCulture)
+            ([double]$Record[6]).ToString('0.0############', $diagnosticCulture)
+            ([double]$Record[7]).ToString('0.0############', $diagnosticCulture)
+            ([double]$Record[8]).ToString('0.0############', $diagnosticCulture)
+        )
+        $script:writer.WriteLine($fields -join ',')
+        $script:recordsWritten++
+    }
+
+    function Drain-CaptureQueue {
+        param([AllowNull()][string]$CaptureId)
+
+        $record = $null
+        while ($DiagnosticQueue.TryDequeue([ref]$record)) {
+            if ($null -ne $CaptureId -and [string]$record[0] -ceq $CaptureId) {
+                Write-CaptureRecord -Record $record
+            }
+            $record = $null
+        }
+    }
+
+    function Close-Capture {
+        param([bool]$CollectorStopping)
+
+        if ($null -eq $script:activeCaptureId) { return }
+
+        $DiagnosticState.CaptureId = $null
+        Drain-CaptureQueue -CaptureId $script:activeCaptureId
+
+        if ($null -ne $script:writer) {
+            $script:writer.Flush()
+            $script:writer.Dispose()
+            $script:writer = $null
+        }
+
+        $completion = @(
+            "CaptureId=$($script:activeCaptureId)"
+            "RecordsWritten=$($script:recordsWritten)"
+            "CollectorStopping=$([int]$CollectorStopping)"
+            "CompletedUtc=$([DateTime]::UtcNow.ToString('o', $diagnosticCulture))"
+            ''
+        ) -join "`r`n"
+        [IO.File]::WriteAllText(
+            (Join-Path $script:captureDirectory 'box1_collector_capture.complete'),
+            $completion,
+            $utf8
+        )
+
+        $script:activeCaptureId = $null
+        $script:captureDirectory = $null
+        $script:recordsWritten = 0L
+    }
+
+    $request = Get-CaptureRequest
+
+    try {
+        while (-not [bool]$DiagnosticState.Stop) {
+            if ($null -ne $activeCaptureId -and
+                ($null -eq $request -or $request.CaptureId -cne $activeCaptureId)) {
+                Close-Capture -CollectorStopping $false
+            }
+
+            if ($null -eq $activeCaptureId -and $null -ne $request) {
+                $activeCaptureId = $request.CaptureId
+                $captureDirectory = $request.CaptureDirectory
+                $recordsWritten = 0L
+                $stream = [IO.FileStream]::new(
+                    (Join-Path $captureDirectory 'box1_raw.csv'),
+                    [IO.FileMode]::Create,
+                    [IO.FileAccess]::Write,
+                    [IO.FileShare]::Read
+                )
+                $writer = [IO.StreamWriter]::new($stream, $utf8)
+                $writer.WriteLine('UtcTicks,TimestampLocal,Sequence,LeftRmsDb,LeftPeakDb,LeftVuDb,RightRmsDb,RightPeakDb,RightVuDb')
+                $writer.Flush()
+                [IO.File]::WriteAllText(
+                    (Join-Path $captureDirectory 'box1_collector_capture.started'),
+                    "CaptureId=$activeCaptureId`r`n",
+                    $utf8
+                )
+                $DiagnosticState.CaptureId = $activeCaptureId
+                $DiagnosticState.Error = $null
+            }
+
+            if ($null -ne $activeCaptureId) {
+                Drain-CaptureQueue -CaptureId $activeCaptureId
+            }
+            else {
+                Drain-CaptureQueue -CaptureId $null
+            }
+
+            if (-not $DiagnosticQueue.IsEmpty) {
+                if ($DiagnosticControlSignal.WaitOne(0)) {
+                    $request = Get-CaptureRequest
+                }
+            }
+            else {
+                $waitResult = [Threading.WaitHandle]::WaitAny(
+                    [Threading.WaitHandle[]]@($DiagnosticSignal, $DiagnosticControlSignal)
+                )
+                if ($waitResult -eq 1) {
+                    $request = Get-CaptureRequest
+                }
+            }
+        }
+    }
+    catch {
+        $DiagnosticState.CaptureId = $null
+        $DiagnosticState.Error = $_.Exception.Message
+        if ($null -ne $captureDirectory) {
+            try {
+                [IO.File]::WriteAllText(
+                    (Join-Path $captureDirectory 'box1_collector_capture.error.txt'),
+                    $_.Exception.ToString(),
+                    $utf8
+                )
+            }
+            catch {}
+        }
+    }
+    finally {
+        try { Close-Capture -CollectorStopping $true } catch {}
+        if ($null -ne $writer) { try { $writer.Dispose() } catch {} }
+    }
+}
+
 $sequence = Get-InitialSequence
 $connection = $null
 $publisherState = [hashtable]::Synchronized(@{
@@ -405,6 +597,21 @@ $publisherSignal = [Threading.AutoResetEvent]::new($false)
 $publisherRunspace = $null
 $publisherPowerShell = $null
 $publisherAsyncResult = $null
+$diagnosticState = [hashtable]::Synchronized(@{
+    Stop = $false
+    CaptureId = $null
+    Error = $null
+})
+$diagnosticQueue = [Collections.Concurrent.ConcurrentQueue[object]]::new()
+$diagnosticSignal = [Threading.AutoResetEvent]::new($false)
+$diagnosticControlSignal = [Threading.EventWaitHandle]::new(
+    $false,
+    [Threading.EventResetMode]::AutoReset,
+    $DiagnosticControlEventName
+)
+$diagnosticRunspace = $null
+$diagnosticPowerShell = $null
+$diagnosticAsyncResult = $null
 
 try {
     $publisherRunspace = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
@@ -423,6 +630,20 @@ try {
     [void]$publisherPowerShell.AddArgument($ErrorTempFile)
     [void]$publisherPowerShell.AddArgument($HeartbeatIntervalSeconds)
     $publisherAsyncResult = $publisherPowerShell.BeginInvoke()
+
+    $diagnosticRunspace = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $diagnosticRunspace.Open()
+
+    $diagnosticPowerShell = [PowerShell]::Create()
+    $diagnosticPowerShell.Runspace = $diagnosticRunspace
+    [void]$diagnosticPowerShell.AddScript($DiagnosticWriterScript.ToString())
+    [void]$diagnosticPowerShell.AddArgument($diagnosticState)
+    [void]$diagnosticPowerShell.AddArgument($diagnosticQueue)
+    [void]$diagnosticPowerShell.AddArgument($diagnosticSignal)
+    [void]$diagnosticPowerShell.AddArgument($diagnosticControlSignal)
+    [void]$diagnosticPowerShell.AddArgument($DiagnosticControlFile)
+    [void]$diagnosticPowerShell.AddArgument($DiagnosticCaptureRoot)
+    $diagnosticAsyncResult = $diagnosticPowerShell.BeginInvoke()
 
     while ($true) {
         try {
@@ -446,6 +667,8 @@ try {
             }
             $sequence++
 
+            $receiptTimestamp = [DateTime]::Now
+
             $publisherState.LatestSample = [pscustomobject]@{
                 Firmware = $connection.Firmware
                 Port = $connection.PortName
@@ -458,9 +681,27 @@ try {
                 LeftLevel = Convert-DbfsToLevel -Dbfs $telemetry.LeftVuDb
                 RightLevel = Convert-DbfsToLevel -Dbfs $telemetry.RightVuDb
                 Sequence = $sequence
-                ReceiptTimestamp = [DateTime]::Now
+                ReceiptTimestamp = $receiptTimestamp
             }
             [void]$publisherSignal.Set()
+
+            $captureId = $diagnosticState.CaptureId
+            if (-not [string]::IsNullOrWhiteSpace($captureId)) {
+                # Diagnostic acquisition is producer-only: no formatting, file I/O,
+                # waiting, pacing, or bounded-queue backpressure occurs here.
+                $diagnosticQueue.Enqueue([object[]]@(
+                    $captureId
+                    $receiptTimestamp
+                    $sequence
+                    $telemetry.LeftRmsDb
+                    $telemetry.LeftPeakDb
+                    $telemetry.LeftVuDb
+                    $telemetry.RightRmsDb
+                    $telemetry.RightPeakDb
+                    $telemetry.RightVuDb
+                ))
+                [void]$diagnosticSignal.Set()
+            }
         }
         catch {
             $message = $_.Exception.Message
@@ -502,6 +743,27 @@ finally {
     if ($null -ne $publisherPowerShell) { $publisherPowerShell.Dispose() }
     if ($null -ne $publisherRunspace) { $publisherRunspace.Dispose() }
     $publisherSignal.Dispose()
+
+    $diagnosticState.Stop = $true
+    [void]$diagnosticSignal.Set()
+
+    if ($null -ne $diagnosticAsyncResult) {
+        $diagnosticStopped = $diagnosticAsyncResult.AsyncWaitHandle.WaitOne(
+            [TimeSpan]::FromSeconds($DiagnosticShutdownTimeoutSeconds)
+        )
+        if (-not $diagnosticStopped -and $null -ne $diagnosticPowerShell) {
+            try { $diagnosticPowerShell.Stop() } catch {}
+        }
+        if ($null -ne $diagnosticPowerShell) {
+            try { $diagnosticPowerShell.EndInvoke($diagnosticAsyncResult) } catch {}
+        }
+        try { $diagnosticAsyncResult.AsyncWaitHandle.Dispose() } catch {}
+    }
+
+    if ($null -ne $diagnosticPowerShell) { $diagnosticPowerShell.Dispose() }
+    if ($null -ne $diagnosticRunspace) { $diagnosticRunspace.Dispose() }
+    $diagnosticSignal.Dispose()
+    $diagnosticControlSignal.Dispose()
 
     try { $singleInstanceMutex.ReleaseMutex() } catch {}
     $singleInstanceMutex.Dispose()

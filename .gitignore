@@ -23,6 +23,11 @@ NowPlaying/wiim_artwork.jpg
 # Collector logs
 NowPlaying/apple_music_collector.log
 
+# Temporary Box 1 VU comparison captures and active control file
+diagnostics/captures/
+diagnostics/Box1VUComparison.capture
+diagnostics/Box1VUComparison.capture.tmp
+
 # Local conversation archive
 docs/chat-archive/
 
