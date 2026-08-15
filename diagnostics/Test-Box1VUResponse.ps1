@@ -2,8 +2,9 @@
 param()
 
 # Reference: Rainmeter 4.5.26 PluginAudioLevel.cpp. The reference path applies
-# its asymmetric power envelope per audio sample; the Box 1 path compounds the
-# same coefficient across one 32 ms skin interval with a constant RMS target.
+# its asymmetric power envelope per audio sample. The legacy Lua implementation
+# remains the 32 ms mathematical reference; the collector now applies that same
+# time-domain response to every approximately 10 ms Box 1 RMS report.
 $ErrorActionPreference = 'Stop'
 
 $SampleRate = 48000
@@ -165,6 +166,7 @@ $signalAcquisitionPath = Join-Path $repositoryRoot 'src\@Resources\VU\SignalAcqu
 $responseVariablesPath = Join-Path $repositoryRoot 'src\@Resources\MeterStyles\AnalogFloating\Response.inc'
 $dashboardStatePath = Join-Path $repositoryRoot 'src\@Resources\Includes\DashboardState.inc'
 $dashboardTelemetryPath = Join-Path $repositoryRoot 'src\@Resources\Includes\DashboardTelemetry.inc'
+$collectorPath = Join-Path $repositoryRoot 'src\Box1Collector.ps1'
 
 $lua = Get-Content -Raw -LiteralPath $luaPath
 $meterResponse = Get-Content -Raw -LiteralPath $meterResponsePath
@@ -172,6 +174,7 @@ $signalAcquisition = Get-Content -Raw -LiteralPath $signalAcquisitionPath
 $responseVariables = Get-Content -Raw -LiteralPath $responseVariablesPath
 $dashboardState = Get-Content -Raw -LiteralPath $dashboardStatePath
 $dashboardTelemetry = Get-Content -Raw -LiteralPath $dashboardTelemetryPath
+$collector = Get-Content -Raw -LiteralPath $collectorPath
 
 $requiredLuaPatterns = @(
     'local targetPower = target \* target',
@@ -192,13 +195,18 @@ if ($lua -match 'AverageSize|peak|vu|hold|Start-Sleep|sleep\(') {
 if ($meterResponse -match 'AverageSize') {
     throw 'MeterResponse.inc contains unexpected AverageSize smoothing.'
 }
-if ($meterResponse -notmatch 'InputMeasure=DashboardBox1LeftRmsLevel' -or
-    $meterResponse -notmatch 'InputMeasure=DashboardBox1RightRmsLevel') {
-    throw 'MeterResponse.inc is not using the Box 1 raw RMS-derived measures.'
+if ($meterResponse -notmatch 'DashboardRawBox1RmsEnvelopeLeft \* #DashboardVUGain#' -or
+    $meterResponse -notmatch 'DashboardRawBox1RmsEnvelopeRight \* #DashboardVUGain#' -or
+    $meterResponse -match 'ScriptFile=#@#VU\\Box1VUResponse\.lua') {
+    throw 'MeterResponse.inc is not using the collector-side Box 1 RMS envelope directly.'
 }
-if ($dashboardTelemetry -notmatch 'LeftRmsDb=' -or
-    $dashboardTelemetry -notmatch 'RightRmsDb=') {
-    throw 'DashboardTelemetry.inc is not parsing the Box 1 raw RMS fields.'
+if ($dashboardTelemetry -notmatch 'Measure=Registry' -or
+    $dashboardTelemetry -notmatch 'RegValue=LeftRmsDb' -or
+    $dashboardTelemetry -notmatch 'RegValue=RightRmsDb' -or
+    $dashboardTelemetry -notmatch 'RegValue=LeftRmsEnvelope' -or
+    $dashboardTelemetry -notmatch 'RegValue=RightRmsEnvelope' -or
+    $dashboardTelemetry -match '\[DashboardBox1StateFile\]') {
+    throw 'DashboardTelemetry.inc is not using the synchronous Box 1 registry transport.'
 }
 if ($dashboardState -notmatch 'Formula=Clamp\(10 \*\* \(DashboardRawBox1LeftRmsDb / 20\), 0, 1\)' -or
     $dashboardState -notmatch 'Formula=Clamp\(10 \*\* \(DashboardRawBox1RightRmsDb / 20\), 0, 1\)') {
@@ -214,7 +222,19 @@ if ($responseVariables -notmatch 'DashboardVUGain=2\.7' -or
     $responseVariables -notmatch 'DashboardVUDecay=520') {
     throw 'The shared VU response values are not 2.7 / 85 ms / 520 ms.'
 }
+if ($collector -notmatch '\$RmsAttackMilliseconds = 85\.0' -or
+    $collector -notmatch '\$RmsDecayMilliseconds = 520\.0' -or
+    $collector -notmatch '\[Math\]::Log10\(0\.01\) \* \$ElapsedMilliseconds / \$responseMilliseconds' -or
+    $collector -notmatch 'TargetLevel \$leftRmsLevel' -or
+    $collector -notmatch 'TargetLevel \$rightRmsLevel' -or
+    $collector -notmatch 'LeftRmsEnvelope = \[Math\]::Min' -or
+    $collector -notmatch 'RightRmsEnvelope = \[Math\]::Min') {
+    throw 'Box1Collector.ps1 is not applying the AudioLevel-equivalent RMS response.'
+}
+if ($collector -match 'Start-Sleep.+Rms|AverageSize|transient hold|rolling max') {
+    throw 'The Box 1 RMS response contains an unexpected pacing or transient mechanism.'
+}
 
 $results | Format-Table -AutoSize
 'Gain/clamp validation: PASS'
-'Source-path and no-additional-smoothing validation: PASS'
+'Source-path, registry transport, and no-additional-smoothing validation: PASS'

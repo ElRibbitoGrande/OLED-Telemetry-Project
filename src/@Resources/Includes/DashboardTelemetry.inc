@@ -184,59 +184,74 @@ URL=[DashboardDenonStateFile]
 StringIndex=29
 DynamicVariables=1
 
-[DashboardBox1StateFile]
-Measure=WebParser
-URL=file://#DashboardInputBox1StatePath#
-RegExp=(?s)Connected=([01])\r?\n.*Ready=([01])\r?\n.*LeftRmsDb=(-?[0-9]+(?:\.[0-9]+)?)\r?\n.*RightRmsDb=(-?[0-9]+(?:\.[0-9]+)?)\r?\n.*LeftLevel=([0-9]+(?:\.[0-9]+)?)\r?\nRightLevel=([0-9]+(?:\.[0-9]+)?)\r?\nSequence=([0-9]+)\r?\nUpdated=([^\r\n]+)
-UpdateRate=1
-DynamicVariables=1
-
 [DashboardRawBox1Connected]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=1
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=Connected
 DynamicVariables=1
 
 [DashboardRawBox1Ready]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=2
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=Ready
 DynamicVariables=1
 
 [DashboardRawBox1LeftRmsDb]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=3
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=LeftRmsDb
 DynamicVariables=1
 
 [DashboardRawBox1RightRmsDb]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=4
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=RightRmsDb
 DynamicVariables=1
 
 [DashboardRawBox1LeftLevel]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=5
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=LeftLevel
 DynamicVariables=1
 
 [DashboardRawBox1RightLevel]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=6
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=RightLevel
+DynamicVariables=1
+
+[DashboardRawBox1RmsEnvelopeLeft]
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=LeftRmsEnvelope
+DynamicVariables=1
+
+[DashboardRawBox1RmsEnvelopeRight]
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=RightRmsEnvelope
 DynamicVariables=1
 
 [DashboardRawBox1Sequence]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=7
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=Sequence
 DynamicVariables=1
 
 [DashboardRawBox1Updated]
-Measure=WebParser
-URL=[DashboardBox1StateFile]
-StringIndex=8
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=Updated
 DynamicVariables=1
 
 [DashboardNowPlayingStateFile]
