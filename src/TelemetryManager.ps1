@@ -7,11 +7,13 @@ $State = Join-Path $Root 'telemetry_manager_status.txt'
 $DenonScript = Join-Path $Root 'denon_status.ps1'
 $RouterScript = Join-Path $NowPlaying 'NowPlayingRouter.ps1'
 $DecoderScript = Join-Path $Root 'DecoderCollector.ps1'
+$Box1Script = Join-Path $Root 'Box1Collector.ps1'
 
 $DenonHeartbeat = Join-Path $Root 'denon_heartbeat.txt'
 $NowPlayingState = Join-Path $NowPlaying 'now_playing.txt'
 $RouterHeartbeat = Join-Path $NowPlaying 'router_heartbeat.txt'
 $DecoderHeartbeat = Join-Path $Root 'decoder_heartbeat.txt'
+$Box1Heartbeat = Join-Path $Root 'box1_heartbeat.txt'
 $routerHeartbeatStaleLogged = $false
 
 $createdNew = $false
@@ -69,12 +71,14 @@ function Write-State {
     $a = @(Find-Collector 'AppleMusicCollector\.ps1')
     $w = @(Find-Collector 'WiiM-NowPlaying-Bridge\.ps1')
     $x = @(Find-Collector 'DecoderCollector\.ps1')
+    $b = @(Find-Collector 'Box1Collector\.ps1')
 
     $dCount = @($d).Count
     $rCount = @($r).Count
     $aCount = @($a).Count
     $wCount = @($w).Count
     $xCount = @($x).Count
+    $bCount = @($b).Count
 
     $activeMetadata = if ($wCount -eq 1) {
         'WiiM'
@@ -108,6 +112,10 @@ function Write-State {
         "DecoderPID=$(($x | Select-Object -ExpandProperty ProcessId) -join ',')"
         "DecoderHeartbeatAgeSeconds=$([math]::Round((AgeSeconds $DecoderHeartbeat),1))"
 
+        "Box1Collector=$(if($bCount -eq 1){'Running'}elseif($bCount -eq 0){'Stopped'}else{'Duplicate'})"
+        "Box1PID=$(($b | Select-Object -ExpandProperty ProcessId) -join ',')"
+        "Box1HeartbeatAgeSeconds=$([math]::Round((AgeSeconds $Box1Heartbeat),1))"
+
         "Updated=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     )
 
@@ -122,6 +130,7 @@ try {
         Start-Collector $DenonScript 'denon_status\.ps1' 'Denon collector'
         Start-Collector $RouterScript 'NowPlayingRouter\.ps1' 'Now Playing router'
         Start-Collector $DecoderScript 'DecoderCollector\.ps1' 'Decoder collector'
+        Start-Collector $Box1Script 'Box1Collector\.ps1' 'Box 1 collector'
 
         # The router owns and switches the Apple Music and WiiM collectors.
         # The manager supervises only the router itself, not its child collector.
@@ -135,6 +144,14 @@ try {
             (AgeSeconds $DecoderHeartbeat) -gt 30) {
             Log 'Decoder heartbeat stale; restarting collector.'
             Stop-Collector 'DecoderCollector\.ps1'
+        }
+
+        $box1Processes = @(Find-Collector 'Box1Collector\.ps1')
+        if ($box1Processes.Count -eq 1 -and
+            ((Get-Date) - $box1Processes[0].CreationDate).TotalSeconds -gt 12 -and
+            (AgeSeconds $Box1Heartbeat) -gt 12) {
+            Log 'Box 1 heartbeat stale; restarting collector.'
+            Stop-Collector 'Box1Collector\.ps1'
         }
 
         if ((Test-Path -LiteralPath $RouterHeartbeat) -and
