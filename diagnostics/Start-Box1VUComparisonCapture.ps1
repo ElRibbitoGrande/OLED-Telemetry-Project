@@ -51,6 +51,7 @@ try {
     Signal-CollectorControlChange
 
     & $RainmeterExe '!EnableMeasure' $RainmeterMeasure $RainmeterConfig
+    & $RainmeterExe '!CommandMeasure' $RainmeterMeasure 'Initialize()' $RainmeterConfig
     & $RainmeterExe '!UpdateMeasure' $RainmeterMeasure $RainmeterConfig
 
     $collectorStarted = Join-Path $captureDirectory 'box1_collector_capture.started'
