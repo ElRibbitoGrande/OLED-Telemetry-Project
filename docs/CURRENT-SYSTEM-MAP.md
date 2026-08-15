@@ -1,5 +1,12 @@
 # Current OLED Telemetry System Map
 
+> Historical scope note: this document records the pre-Box-1 architecture
+> investigated during the original partial-freeze audit. Statements below
+> that the VU path is AudioLevel-only or that no registry IPC exists describe
+> that historical baseline. The production Box 1 architecture added on
+> 2026-08-15 is documented in
+> [`BOX1-VU-ENGINEERING-POSTMORTEM.md`](BOX1-VU-ENGINEERING-POSTMORTEM.md).
+
 Status: diagnostic baseline, source audit performed 2026-07-25  
 Scope: development repository at `C:\OLED-Telemetry-Project`  
 Live installation: `C:\RainmeterDenon` (not inspected or modified)  

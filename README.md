@@ -12,6 +12,18 @@ C:\RainmeterDenon
 The copy in this repository is the development and diagnostic copy.
 Do not modify the live installation directly.
 
+## Box 1 known-good production state
+
+As of 2026-08-15, Box 1 firmware 0.18 and the Analog_Floating2 VU
+integration are confirmed production-good. The collector acquires PCM1808
+telemetry at approximately 100 Hz, performs the AudioLevel-equivalent RMS
+envelope continuously, and publishes its current envelope through a volatile
+per-user registry key for synchronous Rainmeter consumption.
+
+The complete architecture, measurements, failed approaches, recovery
+artifacts, and enclosure lessons are preserved in
+[`docs/BOX1-VU-ENGINEERING-POSTMORTEM.md`](docs/BOX1-VU-ENGINEERING-POSTMORTEM.md).
+
 ## Major components
 
 - PowerShell telemetry and polling scripts
