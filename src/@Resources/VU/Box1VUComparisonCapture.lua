@@ -38,7 +38,7 @@ local function csv(value)
 end
 
 local function readControl(path)
-    local file = io.open(path, 'rb')
+    local file = io.open(path, 'r')
     if file == nil then
         return nil
     end
