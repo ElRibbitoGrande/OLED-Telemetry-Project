@@ -47,7 +47,7 @@ function Update()
 
     local responseMs = decayMs
     if target > output then
-        responseMs = attackMs
+        responseMs = 0
     end
 
     output = clamp(output + ((target - output) * responseAlpha(responseMs)))
