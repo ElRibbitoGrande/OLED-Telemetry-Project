@@ -8,6 +8,7 @@ $DenonScript = Join-Path $Root 'denon_status.ps1'
 $RouterScript = Join-Path $NowPlaying 'NowPlayingRouter.ps1'
 $DecoderScript = Join-Path $Root 'DecoderCollector.ps1'
 $Box1Script = Join-Path $Root 'Box1Collector.ps1'
+$HotkeyScript = Join-Path $Root 'Utilities\RainmeterRefreshHotkey.ps1'
 
 $DenonHeartbeat = Join-Path $Root 'denon_heartbeat.txt'
 $NowPlayingState = Join-Path $NowPlaying 'now_playing.txt'
@@ -72,6 +73,7 @@ function Write-State {
     $w = @(Find-Collector 'WiiM-NowPlaying-Bridge\.ps1')
     $x = @(Find-Collector 'DecoderCollector\.ps1')
     $b = @(Find-Collector 'Box1Collector\.ps1')
+    $h = @(Find-Collector 'RainmeterRefreshHotkey\.ps1')
 
     $dCount = @($d).Count
     $rCount = @($r).Count
@@ -79,6 +81,7 @@ function Write-State {
     $wCount = @($w).Count
     $xCount = @($x).Count
     $bCount = @($b).Count
+    $hCount = @($h).Count
 
     $activeMetadata = if ($wCount -eq 1) {
         'WiiM'
@@ -116,6 +119,9 @@ function Write-State {
         "Box1PID=$(($b | Select-Object -ExpandProperty ProcessId) -join ',')"
         "Box1HeartbeatAgeSeconds=$([math]::Round((AgeSeconds $Box1Heartbeat),1))"
 
+        "RainmeterRefreshHotkey=$(if($hCount -eq 1){'Running'}elseif($hCount -eq 0){'Stopped'}else{'Duplicate'})"
+        "RainmeterRefreshHotkeyPID=$(($h | Select-Object -ExpandProperty ProcessId) -join ',')"
+
         "Updated=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     )
 
@@ -131,6 +137,7 @@ try {
         Start-Collector $RouterScript 'NowPlayingRouter\.ps1' 'Now Playing router'
         Start-Collector $DecoderScript 'DecoderCollector\.ps1' 'Decoder collector'
         Start-Collector $Box1Script 'Box1Collector\.ps1' 'Box 1 collector'
+        Start-Collector $HotkeyScript 'RainmeterRefreshHotkey\.ps1' 'Rainmeter refresh hotkey listener'
 
         # The router owns and switches the Apple Music and WiiM collectors.
         # The manager supervises only the router itself, not its child collector.
