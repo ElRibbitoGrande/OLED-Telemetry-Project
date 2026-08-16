@@ -204,10 +204,14 @@ function Write-InactiveNowPlaying {
         ""
     ) -join "`r`n"
 
-    $tempPath = "$NowPlayingPath.tmp"
     try {
-        [IO.File]::WriteAllText($tempPath, $content, [Text.UTF8Encoding]::new($false))
-        Move-Item -LiteralPath $tempPath -Destination $NowPlayingPath -Force
+        Write-NowPlayingStateFile `
+            -Path $NowPlayingPath `
+            -Content $content `
+            -Component 'NowPlayingRouter' `
+            -DiagnosticFields @{
+                activeSource = $SelectedSource; selectedCollector = 'None'; active = 0
+            }
         Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'ROUTER_STATE_WRITE' -Fields @{
             activeSource = $SelectedSource; selectedCollector = 'None'; active = 0
             source = ''; title = ''; artist = ''; album = ''; artworkAvailable = 0; artwork = ''
@@ -294,6 +298,7 @@ function Set-Mode {
 
 New-Item -ItemType Directory -Path $RouterDirectory -Force | Out-Null
 . (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
+. (Join-Path $PSScriptRoot 'NowPlayingStatePublication.ps1')
 Write-RouterLog "Now Playing Router started. PID=$PID."
 Write-NowPlayingDiagnostic -Component 'NowPlayingRouter' -Event 'ROUTER_STARTED' -Fields @{
     statePath = $NowPlayingPath; denonStatusPath = $DenonStatusPath; pollSeconds = $PollSeconds

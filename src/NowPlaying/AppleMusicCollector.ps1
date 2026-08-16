@@ -14,6 +14,7 @@ $PollMilliseconds = 1000
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 . (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
+. (Join-Path $PSScriptRoot 'NowPlayingStatePublication.ps1')
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 
 function Await-WinRT {
@@ -316,10 +317,15 @@ function Write-State {
         "Updated=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     )
 
-    $temp = "$StatePath.tmp"
     try {
-        [System.IO.File]::WriteAllLines($temp, $lines, [System.Text.UTF8Encoding]::new($false))
-        Move-Item -LiteralPath $temp -Destination $StatePath -Force
+        Write-NowPlayingStateFile `
+            -Path $StatePath `
+            -Lines $lines `
+            -Component 'AppleMusicCollector' `
+            -DiagnosticFields @{
+                active = $active; source = 'Apple Music'; title = (Clean-Value $Snapshot.Title)
+                artist = $artist; album = $album; collectorFresh = $CollectorFresh
+            }
     }
     catch {
         Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'STATE_WRITE_FAILED' -Fields @{
@@ -330,6 +336,7 @@ function Write-State {
             stateWrite = 'failure'; statePath = $StatePath; exception = $_.Exception.Message
             reason = $Reason
         }
+        $_.Exception.Data['NowPlayingPublicationFailure'] = $true
         throw
     }
 
@@ -397,6 +404,8 @@ $artistLossOutstanding = $false
 $lastDiagnosticSignature = ''
 $nextDiagnosticHeartbeat = Get-Date
 $diagnosticSequence = 0
+$consecutiveCollectorFailures = 0
+$collectorFailureClearThreshold = 3
 
 Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_STARTED' -Fields @{
     source = 'Apple Music'; statePath = $StatePath; pollMilliseconds = $PollMilliseconds
@@ -405,16 +414,31 @@ Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_ST
 while ($true) {
     try {
         $snapshot = Get-AppleMusicSnapshot
-        Write-State -Snapshot $snapshot
-        if (-not [string]::IsNullOrWhiteSpace($lastError)) {
-            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_RECOVERED' -Fields @{
-                source = 'Apple Music'; collectorFresh = $true; previousException = $lastError
-            }
+        $publicationSucceeded = $false
+        try {
+            Write-State -Snapshot $snapshot
+            $publicationSucceeded = $true
         }
-        $lastError = ''
+        catch {
+            if (-not $_.Exception.Data['NowPlayingPublicationFailure']) { throw }
+            # Write-State already records STATE_WRITE_FAILED. Preserve the existing
+            # last-known-good state and do not classify this as a collector failure.
+            Write-Log "State publication failure: $($_.Exception.Message)"
+        }
+
+        if ($publicationSucceeded) {
+            $consecutiveCollectorFailures = 0
+            if (-not [string]::IsNullOrWhiteSpace($lastError)) {
+                Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_RECOVERED' -Fields @{
+                    source = 'Apple Music'; collectorFresh = $true; previousException = $lastError
+                }
+            }
+            $lastError = ''
+        }
     }
     catch {
         $message = $_.Exception.Message
+        $consecutiveCollectorFailures++
         if ($message -ne $lastError) {
             Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_EXCEPTION' -Fields @{
                 source = 'Apple Music'; collectorFresh = $false; exception = $message
@@ -423,10 +447,26 @@ while ($true) {
             $lastError = $message
         }
 
-        Write-State -Snapshot ([pscustomobject]@{
-            Found = $false; Playing = $false; Title = ''; Artist = ''; Album = '';
-            PositionSeconds = 0L; DurationSeconds = 0L; ArtworkAvailable = $false
-        }) -CollectorFresh $false -Reason "collector exception: $message"
+        if ($consecutiveCollectorFailures -lt $collectorFailureClearThreshold) {
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'COLLECTOR_STATE_RETAINED' -Fields @{
+                source = 'Apple Music'; collectorFresh = $false; statePath = $StatePath
+                consecutiveFailures = $consecutiveCollectorFailures
+                clearThreshold = $collectorFailureClearThreshold
+                reason = "transient collector exception: $message"
+            }
+        }
+        else {
+            try {
+                Write-State -Snapshot ([pscustomobject]@{
+                    Found = $false; Playing = $false; Title = ''; Artist = ''; Album = '';
+                    PositionSeconds = 0L; DurationSeconds = 0L; ArtworkAvailable = $false
+                }) -CollectorFresh $false -Reason "persistent collector exception: $message"
+            }
+            catch {
+                # Write-State records STATE_WRITE_FAILED and preserves the existing file.
+                Write-Log "Inactive-state publication failure: $($_.Exception.Message)"
+            }
+        }
     }
 
     Start-Sleep -Milliseconds $PollMilliseconds

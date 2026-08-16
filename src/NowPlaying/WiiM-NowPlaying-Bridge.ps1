@@ -33,12 +33,25 @@ function Escape-LineValue {
 function Write-AtomicText {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Content
+        [Parameter(Mandatory)][string]$Content,
+        [bool]$CollectorFresh = $true
     )
 
-    $tempPath = "$Path.tmp"
-    [IO.File]::WriteAllText($tempPath, $Content, [Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $tempPath -Destination $Path -Force
+    try {
+        Write-NowPlayingStateFile `
+            -Path $Path `
+            -Content $Content `
+            -Component 'WiiMCollector' `
+            -DiagnosticFields @{ source = 'WiiM'; sourceIdentity = 'LYR+' }
+    }
+    catch {
+        Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'STATE_WRITE_FAILED' -Fields @{
+            source = 'WiiM'; sourceIdentity = 'LYR+'; collectorFresh = $CollectorFresh
+            stateWrite = 'failure'; statePath = $Path; exception = $_.Exception.Message
+        }
+        $_.Exception.Data['NowPlayingPublicationFailure'] = $true
+        throw
+    }
 }
 
 function Format-Time {
@@ -75,6 +88,7 @@ $metaUrl   = "https://$WiiMIP/httpapi.asp?command=getMetaInfo"
 
 New-Item -ItemType Directory -Path $NowPlayingDir -Force | Out-Null
 . (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
+. (Join-Path $PSScriptRoot 'NowPlayingStatePublication.ps1')
 
 $nowPlayingPath = Join-Path $NowPlayingDir "now_playing.txt"
 $artworkPath = Join-Path $NowPlayingDir "wiim_artwork.jpg"
@@ -85,6 +99,8 @@ $lastDiagnosticSignature = ""
 $nextDiagnosticHeartbeat = Get-Date
 $diagnosticSequence = 0
 $lastCollectorError = ""
+$consecutiveCollectorFailures = 0
+$collectorFailureClearThreshold = 3
 
 function Write-WiiMStateDiagnostic {
     param(
@@ -241,6 +257,7 @@ while ($true) {
             -ArtworkAvailable $artworkAvailable `
             -Artwork $(if ($artworkAvailable -eq 1) { $artworkPath } else { '' }) `
             -CollectorFresh $true -Reason 'WiiM query succeeded'
+        $consecutiveCollectorFailures = 0
         if (-not [string]::IsNullOrWhiteSpace($lastCollectorError)) {
             Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'COLLECTOR_RECOVERED' -Fields @{
                 source = $source; sourceIdentity = 'LYR+'; collectorFresh = $true
@@ -252,7 +269,17 @@ while ($true) {
         Write-Host ("{0} | {1} - {2}" -f (Get-Date -Format "HH:mm:ss"), $artist, $title)
     }
     catch {
+        if ($_.Exception.Data['NowPlayingPublicationFailure']) {
+            # The valid state could not be replaced. STATE_WRITE_FAILED was already
+            # recorded; retain the existing last-known-good state without declaring
+            # the collector or its metadata failed.
+            Write-Warning "State publication failed: $($_.Exception.Message)"
+            Start-Sleep -Seconds $PollSeconds
+            continue
+        }
+
         $failureMessage = $_.Exception.Message
+        $consecutiveCollectorFailures++
         if ($failureMessage -ne $lastCollectorError) {
             Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'COLLECTOR_EXCEPTION' -Fields @{
                 source = 'WiiM'; sourceIdentity = 'LYR+'; collectorFresh = $false
@@ -260,35 +287,42 @@ while ($true) {
             }
             $lastCollectorError = $failureMessage
         }
-        $content = @(
-            "Active=0"
-            "Source=WiiM"
-            "Title="
-            "Artist="
-            "Album="
-            "PositionSeconds=0"
-            "DurationSeconds=0"
-            "Position="
-            "Duration="
-            "Progress=0"
-            "ArtworkAvailable=0"
-            "Artwork="
-            ""
-        ) -join "`r`n"
 
-        try {
-            Write-AtomicText -Path $nowPlayingPath -Content $content
-            Write-WiiMStateDiagnostic -Active 0 -Source 'WiiM' -Title '' -Artist '' -Album '' `
-                -ArtworkAvailable 0 -Artwork '' -CollectorFresh $false `
-                -Reason "WiiM query failed: $failureMessage"
-        }
-        catch {
-            Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'STATE_WRITE_FAILED' -Fields @{
-                active = 0; source = 'WiiM'; sourceIdentity = 'LYR+'; title = ''; artist = ''; album = ''
-                collectorFresh = $false; stateWrite = 'failure'; statePath = $nowPlayingPath
-                exception = $_.Exception.Message; collectorException = $failureMessage
+        if ($consecutiveCollectorFailures -lt $collectorFailureClearThreshold) {
+            Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'COLLECTOR_STATE_RETAINED' -Fields @{
+                source = 'WiiM'; sourceIdentity = 'LYR+'; collectorFresh = $false
+                statePath = $nowPlayingPath; consecutiveFailures = $consecutiveCollectorFailures
+                clearThreshold = $collectorFailureClearThreshold
+                reason = "transient WiiM query failure: $failureMessage"
             }
-            throw
+        }
+        else {
+            $content = @(
+                "Active=0"
+                "Source=WiiM"
+                "Title="
+                "Artist="
+                "Album="
+                "PositionSeconds=0"
+                "DurationSeconds=0"
+                "Position="
+                "Duration="
+                "Progress=0"
+                "ArtworkAvailable=0"
+                "Artwork="
+                ""
+            ) -join "`r`n"
+
+            try {
+                Write-AtomicText -Path $nowPlayingPath -Content $content -CollectorFresh $false
+                Write-WiiMStateDiagnostic -Active 0 -Source 'WiiM' -Title '' -Artist '' -Album '' `
+                    -ArtworkAvailable 0 -Artwork '' -CollectorFresh $false `
+                    -Reason "persistent WiiM query failure: $failureMessage"
+            }
+            catch {
+                # Write-AtomicText records STATE_WRITE_FAILED and preserves the file.
+                Write-Warning "Inactive-state publication failed: $($_.Exception.Message)"
+            }
         }
         Write-Warning "WiiM query failed: $failureMessage"
     }
