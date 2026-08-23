@@ -6,9 +6,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $script:MaximumLogBytes = 256KB
-$script:HotkeyId = 0x4B31
+$script:HotkeyId = 0x4B32
 $script:Modifiers = [uint32](0x0001 -bor 0x0002 -bor 0x4000) # ALT | CONTROL | NOREPEAT
-$script:VirtualKey = [uint32]0x7B # F12
+$script:VirtualKey = [uint32]0x7A # F11
 $script:WmHotkey = [uint32]0x0312
 
 function Write-HotkeyLog {
@@ -62,6 +62,7 @@ namespace RainmeterDenon.RefreshHotkey
         public IntPtr LParam;
         public uint Time;
         public Point Point;
+        public uint Private;
     }
 
     public static class NativeMethods
@@ -96,6 +97,7 @@ namespace RainmeterDenon.RefreshHotkey
 
         [DllImport("kernel32.dll")]
         public static extern uint GetCurrentThreadId();
+
     }
 }
 '@
@@ -141,7 +143,6 @@ if (-not $createdNew) {
 }
 
 $registered = $false
-
 try {
     $registered = [RainmeterDenon.RefreshHotkey.NativeMethods]::RegisterHotKey(
         [IntPtr]::Zero,
@@ -154,7 +155,7 @@ try {
         $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         $errorMessage = [ComponentModel.Win32Exception]::new($errorCode).Message
         Write-HotkeyLog ((
-            'Registration failure. Hotkey=Ctrl+Alt+F12 Modifiers=0x{0:X4} ' +
+            'Registration failure. Hotkey=Ctrl+Alt+F11 Modifiers=0x{0:X4} ' +
             'VirtualKey=0x{1:X2} Win32Error={2} Exception={3}'
         ) -f $script:Modifiers, $script:VirtualKey, $errorCode, $errorMessage)
         exit 1
@@ -162,7 +163,7 @@ try {
 
     $threadId = [RainmeterDenon.RefreshHotkey.NativeMethods]::GetCurrentThreadId()
     Write-HotkeyLog ((
-        'Listener started. PID={0} ThreadId={1} Hotkey=Ctrl+Alt+F12 ' +
+        'Listener started. PID={0} ThreadId={1} Mode=RegisterHotKey Hotkey=Ctrl+Alt+F11 ' +
         'Modifiers=0x{2:X4} VirtualKey=0x{3:X2}'
     ) -f $PID, $threadId, $script:Modifiers, $script:VirtualKey)
 
