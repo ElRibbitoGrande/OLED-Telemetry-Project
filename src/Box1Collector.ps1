@@ -304,6 +304,9 @@ namespace Box1Collector
         public static readonly IntPtr HKEY_CURRENT_USER =
             new IntPtr(unchecked((int)0x80000001));
 
+        public static readonly IntPtr HKEY_LOCAL_MACHINE =
+            new IntPtr(unchecked((int)0x80000002));
+
         [DllImport(
             "advapi32.dll",
             EntryPoint = "RegCreateKeyExW",
@@ -348,11 +351,11 @@ namespace Box1Collector
         $handle = [IntPtr]::Zero
         $disposition = [uint32]0
         $result = [Box1Collector.NativeMethods]::RegCreateKeyExW(
-            [Box1Collector.NativeMethods]::HKEY_CURRENT_USER,
+            [Box1Collector.NativeMethods]::HKEY_LOCAL_MACHINE,
             $PublisherRegistrySubKey,
             [uint32]0,
             $null,
-            [uint32]1,
+            [uint32]0,
             2,
             [IntPtr]::Zero,
             [ref]$handle,
@@ -362,7 +365,7 @@ namespace Box1Collector
         if ($result -ne 0) {
             throw [System.ComponentModel.Win32Exception]::new(
                 $result,
-                "RegCreateKeyExW failed for HKCU\$PublisherRegistrySubKey"
+                "RegCreateKeyExW failed for HKLM\$PublisherRegistrySubKey"
             )
         }
 
@@ -389,7 +392,7 @@ namespace Box1Collector
         if ($result -ne 0) {
             throw [System.ComponentModel.Win32Exception]::new(
                 $result,
-                "RegSetValueExW failed for HKCU\$PublisherRegistrySubKey\$Name"
+                "RegSetValueExW failed for HKLM\$PublisherRegistrySubKey\$Name"
             )
         }
     }

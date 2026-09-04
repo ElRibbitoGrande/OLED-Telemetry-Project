@@ -36,7 +36,7 @@ PCM1808 stereo ADC
   -> Box1Collector.ps1 continuous serial acquisition
   -> raw LeftRmsDb / RightRmsDb converted to linear amplitude
   -> AudioLevel-equivalent asymmetric power-domain envelope at collector rate
-  -> volatile HKCU\Software\OLED-Telemetry-Project\Box1Runtime values
+  -> nonvolatile HKLM\SOFTWARE\OLED-Telemetry-Project\Box1Runtime values
   -> Rainmeter native Registry measures once per actual skin frame
   -> existing gain 2.7 and clamp to 0..1
   -> exact LYR+ source/usability gate
@@ -72,12 +72,15 @@ These settings are coefficient inputs, not a separately invented conventional
 one-pole time constant. No peak signal, firmware `vu` field, rolling maximum,
 hold, moving average, decimation, or artificial pacing is in the needle path.
 
-The publisher writes the current envelope and supporting state to a volatile
-HKCU key. A volatile key avoids durable registry-hive churn and exists only
-while a process has it open. Values include raw RMS, the processed left/right
-envelopes, connection/readiness, timestamp, and sequence. `Sequence` is written
-last as the commit marker. Rainmeter's native Registry measures synchronously
-query the current values at each actual skin update.
+The publisher writes the current envelope and supporting state to a
+nonvolatile 64-bit HKLM key. The deployment gives the collector's user
+`ReadKey|SetValue` access and gives restricted application tokens read access;
+it does not grant broad write access. Values include raw RMS, the processed
+left/right envelopes, connection/readiness, timestamp, and sequence. `Sequence`
+is written last as the commit marker. Rainmeter's native Registry measures
+synchronously query the current values at each actual skin update. Persistence
+does not make old values usable: the existing five-second sequence-freshness
+guard requires `Sequence` to advance after the skin starts.
 
 The atomic `box1_status.txt` file remains for compatibility, diagnostics, and
 human inspection, but it is no longer in the time-sensitive needle path.
@@ -89,6 +92,49 @@ unchanged Windows expression:
 DashboardVURawLeft * DashboardLevelSourceCode
 DashboardVURawRight * DashboardLevelSourceCode
 ```
+
+## 2026-09-03 Lyr+ stationary-needle incident
+
+The downstream failure boundary was established from a naturally occurring
+live failure. WiiM music produced changing stereo values in
+`box1_status.txt`, the collector remained single-instance and healthy, and the
+AVR source changed correctly, but the rendered Analog_Floating2 needles did
+not move on LYR+.
+
+The diagnostic comparison capture at
+`diagnostics\captures\Box1VUComparison_20260903_212326_479` isolated the
+divergence. Across 5,892 Rainmeter frames, all ten HKCU Registry measures
+remained on the same obsolete committed state, including
+`Sequence=7692374`, while the same running collector's current registry and
+file sequence had advanced beyond 9.6 million and continued changing. Disabling
+and re-enabling the measure, forcing a measure update, and rewriting the key
+did not make Rainmeter acquire the current HKCU object. A new HKCU parent and
+runtime key also remained invisible to Rainmeter. This ruled out Box 1,
+serial acquisition, collector publication, source selection, meter ballistics,
+and the five-second freshness logic.
+
+The demonstrated failure mechanism was a cross-process HKCU namespace mismatch
+between the collector and Rainmeter. Rainmeter was repeatedly querying a
+different, stale HKCU object. The captures establish the namespace split, but
+do not identify which Windows isolation layer created it. The source gate then
+behaved safely: the unchanged sequence failed the freshness test, so LYR+
+received a resting fallback instead of stale meter motion.
+
+The smallest reliable repair moved only the synchronous current-state transport
+to `HKLM\SOFTWARE\OLED-Telemetry-Project\Box1Runtime`, explicitly using the
+64-bit registry view and a scoped ACL. The collector-side envelope, registry
+value names, commit-marker order, source gate, gain, ballistics, and displayed
+meters were not changed. A nonvolatile key is required because Windows does not
+permit a nonvolatile child beneath the earlier volatile parent. Persisted state
+is safe because the sequence-freshness guard remains authoritative.
+
+The post-repair capture at
+`diagnostics\captures\Box1VUComparison_20260903_225311_825` recorded 8,113
+Rainmeter frames and 8,109 unique collector sequences observed by Rainmeter,
+with no raw collector sequence gaps. The user then visually confirmed every
+required state: movement on LYR+, independent musical response, decay to rest
+on WiiM pause, movement on resume, rest on HTPC while WiiM continued, and
+correct behavior across repeated HTPC/Lyr+ transitions.
 
 ## Confirmed results
 
@@ -319,8 +365,39 @@ restored, and refresh only Analog_Floating2 if its files are restored.
 After recovery verify:
 
 1. `Box1Collector.ps1` is a single TelemetryManager child.
-2. `HKCU\Software\OLED-Telemetry-Project\Box1Runtime` reports Connected and
+2. `HKLM\SOFTWARE\OLED-Telemetry-Project\Box1Runtime` reports Connected and
    Ready as 1 and its Sequence advances near 100 Hz.
 3. `box1_heartbeat.txt` is fresh and no fresh `box1_status_error.txt` exists.
 4. Analog_Floating2 sees a newer Box sequence on every actual frame.
 5. Non-LYR+ VU behavior remains the unchanged AudioLevel fallback.
+
+## Deployment and rollback for the HKLM repair
+
+Validate from `C:\OLED-Telemetry-Project` before deployment:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\diagnostics\Test-Box1VUResponse.ps1
+```
+
+Then run the deployment helper from an elevated PowerShell session:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OLED-Telemetry-Project\diagnostics\Deploy-Box1VURegistryRepair.ps1
+```
+
+The helper backs up both deployed files, provisions the 64-bit HKLM key and
+ACL, copies and hash-verifies the files, restarts only the manager-owned Box 1
+collector, and verifies a single replacement process plus an advancing
+sequence. Refresh only `Analog_Floating2` afterward; a Rainmeter application
+restart is not required.
+
+The validated production rollback directory is
+`C:\RainmeterDenon\Backups\Box1-VU-Lyr-Repair\20260903_225209_209`.
+To roll back, first preserve the current deployed files, then restore
+`Box1Collector.ps1.pre` to `C:\RainmeterDenon\Box1Collector.ps1` and
+`DashboardTelemetry.inc.pre` to the skin's
+`@Resources\Includes\DashboardTelemetry.inc`. From an elevated session remove
+only `HKLM\SOFTWARE\OLED-Telemetry-Project\Box1Runtime`, restart only the
+manager-owned Box 1 collector, and refresh only Analog_Floating2. The older
+collector recreates its original HKCU transport. Verify one collector, fresh
+heartbeat/status, advancing HKCU sequence, and normal needle behavior.

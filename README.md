@@ -17,8 +17,10 @@ Do not modify the live installation directly.
 As of 2026-08-15, Box 1 firmware 0.18 and the Analog_Floating2 VU
 integration are confirmed production-good. The collector acquires PCM1808
 telemetry at approximately 100 Hz, performs the AudioLevel-equivalent RMS
-envelope continuously, and publishes its current envelope through a volatile
-per-user registry key for synchronous Rainmeter consumption.
+envelope continuously, and publishes its current envelope through a
+machine-wide, nonvolatile registry key with a scoped ACL for synchronous
+Rainmeter consumption. Rainmeter's sequence-freshness guard prevents persisted
+values from being treated as live when the collector is absent.
 
 The complete architecture, measurements, failed approaches, recovery
 artifacts, and enclosure lessons are preserved in

@@ -201,6 +201,8 @@ if ($meterResponse -notmatch 'DashboardRawBox1RmsEnvelopeLeft \* #DashboardVUGai
     throw 'MeterResponse.inc is not using the collector-side Box 1 RMS envelope directly.'
 }
 if ($dashboardTelemetry -notmatch 'Measure=Registry' -or
+    ([regex]::Matches($dashboardTelemetry, 'RegHKey=HKEY_LOCAL_MACHINE').Count -ne 10) -or
+    ([regex]::Matches($dashboardTelemetry, 'RegKey=Software\\OLED-Telemetry-Project\\Box1Runtime').Count -ne 10) -or
     $dashboardTelemetry -notmatch 'RegValue=LeftRmsDb' -or
     $dashboardTelemetry -notmatch 'RegValue=RightRmsDb' -or
     $dashboardTelemetry -notmatch 'RegValue=LeftRmsEnvelope' -or
@@ -223,6 +225,9 @@ if ($responseVariables -notmatch 'DashboardVUGain=2\.7' -or
     throw 'The shared VU response values are not 2.7 / 85 ms / 520 ms.'
 }
 if ($collector -notmatch '\$RmsAttackMilliseconds = 85\.0' -or
+    $collector -notmatch '\$RuntimeRegistrySubKey = ''Software\\OLED-Telemetry-Project\\Box1Runtime''' -or
+    $collector -notmatch '\[Box1Collector\.NativeMethods\]::HKEY_LOCAL_MACHINE' -or
+    $collector -notmatch '(?s)RegCreateKeyExW\(.+?\[uint32\]0,.+?\[uint32\]0,.+?\[IntPtr\]::Zero' -or
     $collector -notmatch '\$RmsDecayMilliseconds = 520\.0' -or
     $collector -notmatch '\[Math\]::Log10\(0\.01\) \* \$ElapsedMilliseconds / \$responseMilliseconds' -or
     $collector -notmatch 'TargetLevel \$leftRmsLevel' -or

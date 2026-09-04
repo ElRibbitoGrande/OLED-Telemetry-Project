@@ -186,70 +186,70 @@ DynamicVariables=1
 
 [DashboardRawBox1Connected]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=Connected
 DynamicVariables=1
 
 [DashboardRawBox1Ready]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=Ready
 DynamicVariables=1
 
 [DashboardRawBox1LeftRmsDb]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=LeftRmsDb
 DynamicVariables=1
 
 [DashboardRawBox1RightRmsDb]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=RightRmsDb
 DynamicVariables=1
 
 [DashboardRawBox1LeftLevel]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=LeftLevel
 DynamicVariables=1
 
 [DashboardRawBox1RightLevel]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=RightLevel
 DynamicVariables=1
 
 [DashboardRawBox1RmsEnvelopeLeft]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=LeftRmsEnvelope
 DynamicVariables=1
 
 [DashboardRawBox1RmsEnvelopeRight]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=RightRmsEnvelope
 DynamicVariables=1
 
 [DashboardRawBox1Sequence]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=Sequence
 DynamicVariables=1
 
 [DashboardRawBox1Updated]
 Measure=Registry
-RegHKey=HKEY_CURRENT_USER
+RegHKey=HKEY_LOCAL_MACHINE
 RegKey=Software\OLED-Telemetry-Project\Box1Runtime
 RegValue=Updated
 DynamicVariables=1
