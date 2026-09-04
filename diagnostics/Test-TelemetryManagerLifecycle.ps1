@@ -90,10 +90,14 @@ New-Item -ItemType Directory -Path $TestRoot -Force | Out-Null
 
 try {
     $productionHotkeyContent = [IO.File]::ReadAllText($ProductionHotkeyPath)
-    Assert-True ($productionHotkeyContent -match '\$script:VirtualKey\s*=\s*\[uint32\]0x7A\s*# F11') `
+    Assert-True ($productionHotkeyContent -match '\$script:RefreshVirtualKey\s*=\s*\[uint32\]0x7A\s*# F11') `
         'production listener registers VK_F11'
-    Assert-True ($productionHotkeyContent -match 'Hotkey=Ctrl\+Alt\+F11') `
+    Assert-True ($productionHotkeyContent -match 'RefreshHotkey=Ctrl\+Alt\+F11') `
         'production listener logs the Ctrl+Alt+F11 chord'
+    Assert-True ($productionHotkeyContent -match '\$script:DiagnosticVirtualKey\s*=\s*\[uint32\]0x79\s*# F10') `
+        'production listener registers VK_F10 for artwork diagnostics'
+    Assert-True ($productionHotkeyContent -match 'DiagnosticHotkey=Ctrl\+Alt\+F10') `
+        'production listener logs the Ctrl+Alt+F10 diagnostic chord'
     Assert-True ($productionHotkeyContent -notmatch 'SetWindowsHookEx|WH_KEYBOARD_LL|InstallKeyboardFallback') `
         'production listener contains no low-level keyboard-hook fallback'
 

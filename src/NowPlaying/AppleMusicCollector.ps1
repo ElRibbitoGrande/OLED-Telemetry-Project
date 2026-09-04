@@ -11,6 +11,7 @@ $LogPath = Join-Path $OutputDirectory 'apple_music_collector.log'
 $ArtworkPathA = Join-Path $OutputDirectory 'artwork_a.jpg'
 $ArtworkPathB = Join-Path $OutputDirectory 'artwork_b.jpg'
 $PollMilliseconds = 1000
+$CollectorLogMaximumBytes = 1MB
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 . (Join-Path $PSScriptRoot 'NowPlayingDiagnostic.ps1')
@@ -50,6 +51,16 @@ $propertiesType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessi
 
 function Write-Log {
     param([string]$Message)
+    if ((Test-Path -LiteralPath $LogPath -PathType Leaf) -and
+        (Get-Item -LiteralPath $LogPath).Length -ge $CollectorLogMaximumBytes) {
+        for ($index = 3; $index -ge 1; $index--) {
+            $source = if ($index -eq 1) { $LogPath } else { "$LogPath.$($index - 1)" }
+            $destination = "$LogPath.$index"
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Move-Item -LiteralPath $source -Destination $destination -Force
+            }
+        }
+    }
     $line = '{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $Message
     Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
 }
@@ -147,8 +158,18 @@ function Get-AppleArtwork {
 
     $artUrl = [string]$best.artworkUrl100
     $artUrl = $artUrl -replace '100x100bb', '600x600bb'
-    $destination = if ($script:artworkToggle) { $ArtworkPathA } else { $ArtworkPathB }
-    $script:artworkToggle = -not $script:artworkToggle
+    # Never replace the file currently advertised to Rainmeter. On collector
+    # restart, consult the published state instead of resetting a blind toggle.
+    $avoidPath = $script:currentArtwork
+    if ([string]::IsNullOrWhiteSpace($avoidPath) -and (Test-Path -LiteralPath $StatePath)) {
+        try {
+            $advertised = Get-Content -LiteralPath $StatePath -ErrorAction Stop |
+                Where-Object { $_ -like 'Artwork=*' } | Select-Object -First 1
+            if ($advertised) { $avoidPath = $advertised.Substring('Artwork='.Length) }
+        }
+        catch {}
+    }
+    $destination = if ($avoidPath -eq $ArtworkPathA) { $ArtworkPathB } else { $ArtworkPathA }
     $temporary = "$destination.tmp"
 
     Invoke-WebRequest -Uri $artUrl -Headers $headers -OutFile $temporary -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop
@@ -186,6 +207,7 @@ function Get-AppleMusicSnapshot {
         return [pscustomobject]@{
             Found = $false; Playing = $false; SourceApp = ''; Title = ''; Artist = ''; Album = '';
             PositionSeconds = 0L; DurationSeconds = 0L; ArtworkAvailable = $false
+            PlaybackStatus = 'NoSession'
         }
     }
 
@@ -199,9 +221,11 @@ function Get-AppleMusicSnapshot {
     $timeline = $session.GetTimelineProperties()
     $properties = Await-WinRT -Operation ($session.TryGetMediaPropertiesAsync()) -ResultType $propertiesType
 
+    $playbackStatus = [string]$playback.PlaybackStatus
     return [pscustomobject]@{
         Found = $true
-        Playing = (([string]$playback.PlaybackStatus) -eq 'Playing')
+        Playing = ($playbackStatus -eq 'Playing')
+        PlaybackStatus = $playbackStatus
         SourceApp = [string]$session.SourceAppUserModelId
         Title = [string]$properties.Title
         Artist = [string]$properties.Artist
@@ -219,7 +243,14 @@ function Write-State {
         [string]$Reason = 'collector poll succeeded'
     )
 
-    $active = if ($Snapshot.Found -and $Snapshot.Playing) { 1 } else { 0 }
+    # A paused Apple session still represents the current track only while it
+    # exposes a usable identity. Stopped/closed/no-session remains inactive.
+    $snapshotTitle = Clean-Value $Snapshot.Title
+    $hasTrackIdentity = -not [string]::IsNullOrWhiteSpace($snapshotTitle) -and
+        $snapshotTitle -notmatch '^(?i:connecting)(?:\.{3}|…)?$'
+    $playbackStatus = [string]$Snapshot.PlaybackStatus
+    $active = if ($Snapshot.Found -and ($playbackStatus -eq 'Playing' -or
+        ($playbackStatus -eq 'Paused' -and $hasTrackIdentity))) { 1 } else { 0 }
     $parts = Split-AppleMetadata -Artist $Snapshot.Artist -Album $Snapshot.Album
     $rawArtist = $parts[0]
     $artist = $parts[0]
@@ -244,7 +275,10 @@ function Write-State {
     if ($active -eq 1) {
         $script:inactivePollCount = 0
 
-        if ($trackKey -ne $script:lastArtworkTrackKey -and
+        $artworkIdentityReady = $hasTrackIdentity -and
+            -not [string]::IsNullOrWhiteSpace($artist)
+
+        if ($artworkIdentityReady -and $trackKey -ne $script:lastArtworkTrackKey -and
             (Get-Date) -ge $script:nextArtworkAttempt) {
 
             if ($trackKey -ne $script:pendingArtworkTrackKey) {
@@ -253,11 +287,25 @@ function Write-State {
             }
 
             $replacement = ''
+            $artworkFailureReason = 'no verified catalog artwork match'
+            $artworkAttempt = $script:pendingArtworkFailures + 1
+            $logArtworkAttempt = $artworkAttempt -in @(1, 2, 4, 8, 16) -or
+                ($artworkAttempt % 32) -eq 0
             try {
+                if ($logArtworkAttempt) {
+                    Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'ARTWORK_ACQUISITION_BEGIN' -Fields @{
+                        source = 'Apple Music'; title = (Clean-Value $Snapshot.Title); artist = $artist
+                        album = $album; trackKey = $trackKey; currentArtwork = $script:currentArtwork
+                        attempt = $artworkAttempt
+                    }
+                }
                 $replacement = Get-AppleArtwork -Title (Clean-Value $Snapshot.Title) -Artist $artist -Album $album
             }
             catch {
-                Write-Log "Artwork lookup failed for '$trackKey': $($_.Exception.Message)"
+                if ($logArtworkAttempt) {
+                    Write-Log "Artwork lookup failed for '$trackKey': $($_.Exception.Message)"
+                }
+                $artworkFailureReason = $_.Exception.Message
             }
 
             if (Test-ValidArtwork $replacement) {
@@ -266,30 +314,55 @@ function Write-State {
                 $script:pendingArtworkTrackKey = ''
                 $script:pendingArtworkFailures = 0
                 Write-Log "Artwork saved for: $trackKey"
+                Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'ARTWORK_PUBLISHED' -Fields @{
+                    source = 'Apple Music'; title = (Clean-Value $Snapshot.Title); artist = $artist
+                    album = $album; trackKey = $trackKey; artwork = $replacement
+                    buffer = [IO.Path]::GetFileNameWithoutExtension($replacement)
+                    size = (Get-Item -LiteralPath $replacement).Length
+                }
             }
             else {
                 $script:pendingArtworkFailures++
-                Write-Log "No verified artwork for '$trackKey' (attempt $($script:pendingArtworkFailures))."
+                if ($logArtworkAttempt) {
+                    Write-Log "No verified artwork for '$trackKey' (attempt $($script:pendingArtworkFailures))."
+                }
+
+                if ($logArtworkAttempt) {
+                    Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'ARTWORK_ACQUISITION_FAILED' -Fields @{
+                        source = 'Apple Music'; title = (Clean-Value $Snapshot.Title); artist = $artist
+                        album = $album; trackKey = $trackKey; reason = $artworkFailureReason
+                        attempt = $script:pendingArtworkFailures; retainedArtwork = $script:currentArtwork
+                    }
+
+                    Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'ARTWORK_RETRY_SCHEDULED' -Fields @{
+                        source = 'Apple Music'; title = (Clean-Value $Snapshot.Title); artist = $artist
+                        album = $album; trackKey = $trackKey; attempt = $script:pendingArtworkFailures
+                        retainedArtwork = $script:currentArtwork
+                    }
+                }
 
                 # Retain the last known-good image through brief lookup gaps, but
                 # do not show prior-track artwork indefinitely after a confirmed
                 # transition with no usable replacement.
-                if ($script:pendingArtworkFailures -ge 3) {
+                if ($script:pendingArtworkFailures -ge $script:artworkRetryDelaysSeconds.Count) {
                     $script:currentArtwork = ''
-                    $script:lastArtworkTrackKey = $trackKey
-                    $script:pendingArtworkTrackKey = ''
                 }
             }
-            $script:nextArtworkAttempt = (Get-Date).AddSeconds(5)
+            $delayIndex = [Math]::Max(0, [Math]::Min(
+                $script:pendingArtworkFailures - 1,
+                $script:artworkRetryDelaysSeconds.Count - 1
+            ))
+            $script:nextArtworkAttempt = (Get-Date).AddSeconds($script:artworkRetryDelaysSeconds[$delayIndex])
         }
     }
     else {
         $script:inactivePollCount++
-        if ($script:inactivePollCount -ge 3) {
-            $script:currentArtwork = ''
-            $script:lastArtworkTrackKey = ''
-            $script:pendingArtworkTrackKey = ''
-            $script:pendingArtworkFailures = 0
+        if ($script:inactivePollCount -eq 3 -and (Test-ValidArtwork $script:currentArtwork)) {
+            Write-NowPlayingDiagnostic -Component 'AppleMusicCollector' -Event 'ARTWORK_RETAINED_INACTIVE' -Fields @{
+                source = 'Apple Music'; title = (Clean-Value $Snapshot.Title); artist = $artist
+                album = $album; artwork = $script:currentArtwork
+                reason = 'playback inactive; retain validated artwork for resume'
+            }
         }
     }
 
@@ -315,6 +388,7 @@ function Write-State {
         "ArtworkAvailable=$(if ($artworkAvailable) { 1 } else { 0 })"
         "Artwork=$(if ($artworkAvailable) { $script:currentArtwork } else { '' })"
         "Updated=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        "PlaybackStatus=$(Clean-Value ([string]$Snapshot.PlaybackStatus))"
     )
 
     try {
@@ -324,7 +398,8 @@ function Write-State {
             -Component 'AppleMusicCollector' `
             -DiagnosticFields @{
                 active = $active; source = 'Apple Music'; title = (Clean-Value $Snapshot.Title)
-                artist = $artist; album = $album; collectorFresh = $CollectorFresh
+                artist = $artist; album = $album; playbackStatus = $playbackStatus
+                collectorFresh = $CollectorFresh
             }
     }
     catch {
@@ -394,9 +469,9 @@ $stableArtist = ''
 $stableAlbum = ''
 $lastArtworkTrackKey = ''
 $currentArtwork = ''
-$artworkToggle = $false
 $pendingArtworkTrackKey = ''
 $pendingArtworkFailures = 0
+$artworkRetryDelaysSeconds = @(2, 5, 10, 20, 30)
 $nextArtworkAttempt = Get-Date
 $inactivePollCount = 0
 $lastPublishedArtist = ''
@@ -460,6 +535,7 @@ while ($true) {
                 Write-State -Snapshot ([pscustomobject]@{
                     Found = $false; Playing = $false; Title = ''; Artist = ''; Album = '';
                     PositionSeconds = 0L; DurationSeconds = 0L; ArtworkAvailable = $false
+                    PlaybackStatus = 'NoSession'
                 }) -CollectorFresh $false -Reason "persistent collector exception: $message"
             }
             catch {

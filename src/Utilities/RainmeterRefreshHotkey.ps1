@@ -1,14 +1,17 @@
 [CmdletBinding()]
 param(
     [string]$RainmeterExecutable = 'C:\Program Files\Rainmeter\Rainmeter.exe',
-    [string]$LogPath = 'C:\RainmeterDenon\Logs\RainmeterRefreshHotkey.log'
+    [string]$LogPath = 'C:\RainmeterDenon\Logs\RainmeterRefreshHotkey.log',
+    [string]$ArtworkDiagnosticScript = 'C:\RainmeterDenon\Utilities\ArtworkDiagnosticCapture.ps1'
 )
 
 $ErrorActionPreference = 'Stop'
 $script:MaximumLogBytes = 256KB
-$script:HotkeyId = 0x4B32
+$script:RefreshHotkeyId = 0x4B32
+$script:DiagnosticHotkeyId = 0x4B31
 $script:Modifiers = [uint32](0x0001 -bor 0x0002 -bor 0x4000) # ALT | CONTROL | NOREPEAT
-$script:VirtualKey = [uint32]0x7A # F11
+$script:RefreshVirtualKey = [uint32]0x7A # F11
+$script:DiagnosticVirtualKey = [uint32]0x79 # F10
 $script:WmHotkey = [uint32]0x0312
 
 function Write-HotkeyLog {
@@ -129,6 +132,28 @@ function Invoke-RainmeterRefresh {
     }
 }
 
+function Invoke-ArtworkDiagnosticCapture {
+    Write-HotkeyLog "ARTWORK_DIAGNOSTIC_CAPTURE requested. Script=$ArtworkDiagnosticScript"
+    try {
+        if (-not (Test-Path -LiteralPath $ArtworkDiagnosticScript -PathType Leaf)) {
+            throw "Artwork diagnostic script not found: $ArtworkDiagnosticScript"
+        }
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = 'powershell.exe'
+        $startInfo.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $ArtworkDiagnosticScript
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+        $process = [Diagnostics.Process]::Start($startInfo)
+        if ($null -eq $process) { throw 'Artwork diagnostic process invocation returned no process object.' }
+        Write-HotkeyLog "ARTWORK_DIAGNOSTIC_CAPTURE started. PID=$($process.Id)"
+        $process.Dispose()
+    }
+    catch {
+        Write-HotkeyLog "ARTWORK_DIAGNOSTIC_CAPTURE error. Exception=$($_.Exception.Message)"
+    }
+}
+
 $createdNew = $false
 $mutex = [Threading.Mutex]::new(
     $true,
@@ -142,30 +167,46 @@ if (-not $createdNew) {
     exit 0
 }
 
-$registered = $false
+$refreshRegistered = $false
+$diagnosticRegistered = $false
 try {
-    $registered = [RainmeterDenon.RefreshHotkey.NativeMethods]::RegisterHotKey(
+    $refreshRegistered = [RainmeterDenon.RefreshHotkey.NativeMethods]::RegisterHotKey(
         [IntPtr]::Zero,
-        $script:HotkeyId,
+        $script:RefreshHotkeyId,
         $script:Modifiers,
-        $script:VirtualKey
+        $script:RefreshVirtualKey
     )
 
-    if (-not $registered) {
+    if (-not $refreshRegistered) {
         $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         $errorMessage = [ComponentModel.Win32Exception]::new($errorCode).Message
         Write-HotkeyLog ((
             'Registration failure. Hotkey=Ctrl+Alt+F11 Modifiers=0x{0:X4} ' +
             'VirtualKey=0x{1:X2} Win32Error={2} Exception={3}'
-        ) -f $script:Modifiers, $script:VirtualKey, $errorCode, $errorMessage)
+        ) -f $script:Modifiers, $script:RefreshVirtualKey, $errorCode, $errorMessage)
         exit 1
+    }
+
+    $diagnosticRegistered = [RainmeterDenon.RefreshHotkey.NativeMethods]::RegisterHotKey(
+        [IntPtr]::Zero,
+        $script:DiagnosticHotkeyId,
+        $script:Modifiers,
+        $script:DiagnosticVirtualKey
+    )
+    if (-not $diagnosticRegistered) {
+        $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $errorMessage = [ComponentModel.Win32Exception]::new($errorCode).Message
+        Write-HotkeyLog ((
+            'Registration failure. Hotkey=Ctrl+Alt+F10 Modifiers=0x{0:X4} ' +
+            'VirtualKey=0x{1:X2} Win32Error={2} Exception={3}'
+        ) -f $script:Modifiers, $script:DiagnosticVirtualKey, $errorCode, $errorMessage)
     }
 
     $threadId = [RainmeterDenon.RefreshHotkey.NativeMethods]::GetCurrentThreadId()
     Write-HotkeyLog ((
-        'Listener started. PID={0} ThreadId={1} Mode=RegisterHotKey Hotkey=Ctrl+Alt+F11 ' +
-        'Modifiers=0x{2:X4} VirtualKey=0x{3:X2}'
-    ) -f $PID, $threadId, $script:Modifiers, $script:VirtualKey)
+        'Listener started. PID={0} ThreadId={1} Mode=RegisterHotKey ' +
+        'RefreshHotkey=Ctrl+Alt+F11 DiagnosticHotkey=Ctrl+Alt+F10 DiagnosticRegistered={2}'
+    ) -f $PID, $threadId, $diagnosticRegistered)
 
     $message = [RainmeterDenon.RefreshHotkey.Message]::new()
     while ($true) {
@@ -183,8 +224,12 @@ try {
         if ($messageResult -eq 0) { break }
 
         if ($message.Id -eq $script:WmHotkey -and
-            $message.WParam.ToUInt64() -eq [uint64]$script:HotkeyId) {
+            $message.WParam.ToUInt64() -eq [uint64]$script:RefreshHotkeyId) {
             Invoke-RainmeterRefresh
+        }
+        elseif ($message.Id -eq $script:WmHotkey -and
+            $message.WParam.ToUInt64() -eq [uint64]$script:DiagnosticHotkeyId) {
+            Invoke-ArtworkDiagnosticCapture
         }
 
         [void][RainmeterDenon.RefreshHotkey.NativeMethods]::TranslateMessage([ref]$message)
@@ -196,10 +241,16 @@ catch {
     exit 1
 }
 finally {
-    if ($registered) {
+    if ($diagnosticRegistered) {
         [void][RainmeterDenon.RefreshHotkey.NativeMethods]::UnregisterHotKey(
             [IntPtr]::Zero,
-            $script:HotkeyId
+            $script:DiagnosticHotkeyId
+        )
+    }
+    if ($refreshRegistered) {
+        [void][RainmeterDenon.RefreshHotkey.NativeMethods]::UnregisterHotKey(
+            [IntPtr]::Zero,
+            $script:RefreshHotkeyId
         )
     }
     Write-HotkeyLog "Listener stopped. PID=$PID"

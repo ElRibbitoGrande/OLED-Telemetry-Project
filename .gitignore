@@ -27,6 +27,7 @@ NowPlaying/apple_music_collector.log
 diagnostics/captures/
 diagnostics/Box1VUComparison.capture
 diagnostics/Box1VUComparison.capture.tmp
+.diagnostic-captures/
 
 # Local conversation archive
 docs/chat-archive/
@@ -45,3 +46,5 @@ src/NowPlaying/now_playing.txt
 src/NowPlaying/artwork_a.jpg
 src/NowPlaying/artwork_b.jpg
 src/NowPlaying/wiim_artwork.jpg
+src/NowPlaying/wiim_artwork_a.jpg
+src/NowPlaying/wiim_artwork_b.jpg

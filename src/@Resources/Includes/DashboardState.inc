@@ -102,6 +102,11 @@ Measure=String
 String=[DashboardRawQuickSelectName]
 DynamicVariables=1
 
+[DashboardSpeakerPreset]
+Measure=String
+String=[DashboardRawSpeakerPreset]
+DynamicVariables=1
+
 [DashboardReferenceLevelOffset]
 Measure=String
 String=[DashboardRawReferenceLevelOffset]
@@ -137,12 +142,12 @@ Measure=String
 String=[DashboardRawArtist]
 DynamicVariables=1
 
-; Hidden forensic probe: compares the raw shared state with AF2's parsed Artist.
-; It writes only transitions, mismatches, and a 30-second heartbeat.
+; Hidden artwork controller: retains the last valid state across transient
+; file-open failures, targets only AF2's image meter, and logs transitions.
 [DashboardNowPlayingDiagnostic]
 Measure=Script
 ScriptFile=#@#Scripts\NowPlayingDiagnostic.lua
-UpdateDivider=1
+UpdateDivider=31
 DynamicVariables=1
 
 [DashboardNowPlayingAlbum]

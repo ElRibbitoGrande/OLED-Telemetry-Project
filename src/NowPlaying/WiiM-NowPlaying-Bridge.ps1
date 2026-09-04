@@ -91,8 +91,14 @@ New-Item -ItemType Directory -Path $NowPlayingDir -Force | Out-Null
 . (Join-Path $PSScriptRoot 'NowPlayingStatePublication.ps1')
 
 $nowPlayingPath = Join-Path $NowPlayingDir "now_playing.txt"
-$artworkPath = Join-Path $NowPlayingDir "wiim_artwork.jpg"
-$lastTrackId = ""
+$artworkPathA = Join-Path $NowPlayingDir "wiim_artwork_a.jpg"
+$artworkPathB = Join-Path $NowPlayingDir "wiim_artwork_b.jpg"
+$currentArtworkPath = ""
+$lastArtworkTrackKey = ""
+$artworkFailureTrackKey = ""
+$artworkFailureCount = 0
+$artworkRetryDelaysSeconds = @(2, 5, 10, 20, 30)
+$nextArtworkAttempt = Get-Date
 $lastPublishedArtist = ""
 $artistLossOutstanding = $false
 $lastDiagnosticSignature = ""
@@ -101,6 +107,24 @@ $diagnosticSequence = 0
 $lastCollectorError = ""
 $consecutiveCollectorFailures = 0
 $collectorFailureClearThreshold = 3
+
+# Preserve the currently advertised WiiM slot across collector restarts so the
+# next download is always written to the inactive slot.
+if (Test-Path -LiteralPath $nowPlayingPath -PathType Leaf) {
+    try {
+        $priorState = Get-Content -LiteralPath $nowPlayingPath -ErrorAction Stop
+        $priorSource = ($priorState | Where-Object { $_ -like 'Source=*' } | Select-Object -First 1)
+        $priorArtwork = ($priorState | Where-Object { $_ -like 'Artwork=*' } | Select-Object -First 1)
+        if ($priorSource -and $priorSource.Substring('Source='.Length) -ne 'Apple Music' -and $priorArtwork) {
+            $candidate = $priorArtwork.Substring('Artwork='.Length)
+            if ($candidate -in @($artworkPathA, $artworkPathB) -and
+                (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                $currentArtworkPath = $candidate
+            }
+        }
+    }
+    catch {}
+}
 
 function Write-WiiMStateDiagnostic {
     param(
@@ -183,6 +207,21 @@ while ($true) {
 
         $trackId = [string]$meta.trackId
         $artUrl = [string]$meta.albumArtURI
+        $artworkTrackKey = if (-not [string]::IsNullOrWhiteSpace($trackId)) {
+            "id:$trackId"
+        }
+        else {
+            'metadata:{0}|{1}|{2}|{3}' -f (Escape-LineValue $title),
+                (Escape-LineValue $artist), (Escape-LineValue $album), $artUrl
+        }
+
+        $source = switch ([string]$status.vendor) {
+            "Prime" { "Amazon Music" }
+            default {
+                if ([string]::IsNullOrWhiteSpace([string]$status.vendor)) { "WiiM" }
+                else { [string]$status.vendor }
+            }
+        }
 
         $positionSeconds = 0
         try {
@@ -205,19 +244,71 @@ while ($true) {
 
         $artworkAvailable = 0
         if (-not [string]::IsNullOrWhiteSpace($artUrl)) {
-            if (($trackId -ne $lastTrackId) -or -not (Test-Path -LiteralPath $artworkPath)) {
+            $needsArtwork = ($artworkTrackKey -ne $lastArtworkTrackKey) -or
+                [string]::IsNullOrWhiteSpace($currentArtworkPath) -or
+                -not (Test-Path -LiteralPath $currentArtworkPath -PathType Leaf)
+            $retryDue = ($artworkTrackKey -ne $artworkFailureTrackKey) -or
+                (Get-Date) -ge $nextArtworkAttempt
+            if ($needsArtwork -and $retryDue) {
                 try {
-                    $tempArt = "$artworkPath.tmp"
+                    if ($artworkTrackKey -ne $artworkFailureTrackKey) {
+                        $artworkFailureTrackKey = $artworkTrackKey
+                        $artworkFailureCount = 0
+                    }
+                    $destination = if ($currentArtworkPath -eq $artworkPathA) { $artworkPathB } else { $artworkPathA }
+                    $tempArt = '{0}.{1}.{2}.tmp' -f $destination, $PID, [Guid]::NewGuid().ToString('N')
+                    if ($artworkTrackKey -ne $artworkFailureTrackKey -or
+                        ($artworkFailureCount + 1) -in @(1, 2, 4, 8, 16)) {
+                        Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'ARTWORK_ACQUISITION_BEGIN' -Fields @{
+                            source = $source; title = (Escape-LineValue $title); artist = (Escape-LineValue $artist)
+                            album = (Escape-LineValue $album); trackKey = $artworkTrackKey
+                            currentArtwork = $currentArtworkPath; destination = $destination
+                            attempt = ($artworkFailureCount + 1)
+                        }
+                    }
                     Invoke-WebRequest -Uri $artUrl -OutFile $tempArt -TimeoutSec 10
-                    Move-Item -LiteralPath $tempArt -Destination $artworkPath -Force
-                    $lastTrackId = $trackId
+                    if (-not (Test-Path -LiteralPath $tempArt -PathType Leaf) -or
+                        (Get-Item -LiteralPath $tempArt).Length -le 1024) {
+                        throw 'Downloaded artwork was missing or too small.'
+                    }
+                    Move-Item -LiteralPath $tempArt -Destination $destination -Force
+                    $currentArtworkPath = $destination
+                    $lastArtworkTrackKey = $artworkTrackKey
+                    $artworkFailureTrackKey = ''
+                    $artworkFailureCount = 0
+                    $nextArtworkAttempt = Get-Date
+                    Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'ARTWORK_PUBLISHED' -Fields @{
+                        source = $source; title = (Escape-LineValue $title); artist = (Escape-LineValue $artist)
+                        album = (Escape-LineValue $album); trackKey = $artworkTrackKey
+                        artwork = $currentArtworkPath; buffer = [IO.Path]::GetFileNameWithoutExtension($currentArtworkPath)
+                        size = (Get-Item -LiteralPath $currentArtworkPath).Length
+                    }
                 }
                 catch {
                     Write-Warning "Artwork download failed: $($_.Exception.Message)"
+                    $artworkFailureCount++
+                    $delayIndex = [Math]::Max(0, [Math]::Min(
+                        $artworkFailureCount - 1,
+                        $artworkRetryDelaysSeconds.Count - 1
+                    ))
+                    $nextArtworkAttempt = (Get-Date).AddSeconds($artworkRetryDelaysSeconds[$delayIndex])
+                    if ($artworkFailureCount -in @(1, 2, 4, 8, 16)) {
+                        Write-NowPlayingDiagnostic -Component 'WiiMCollector' -Event 'ARTWORK_ACQUISITION_FAILED' -Fields @{
+                            source = $source; title = (Escape-LineValue $title); artist = (Escape-LineValue $artist)
+                            album = (Escape-LineValue $album); trackKey = $artworkTrackKey
+                            retainedArtwork = $currentArtworkPath; exception = $_.Exception.Message
+                            attempt = $artworkFailureCount
+                        }
+                    }
+                    if ($tempArt -and (Test-Path -LiteralPath $tempArt)) {
+                        Remove-Item -LiteralPath $tempArt -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
 
-            if (Test-Path -LiteralPath $artworkPath) {
+            if (-not [string]::IsNullOrWhiteSpace($currentArtworkPath) -and
+                (Test-Path -LiteralPath $currentArtworkPath -PathType Leaf) -and
+                (Get-Item -LiteralPath $currentArtworkPath).Length -gt 1024) {
                 $artworkAvailable = 1
             }
         }
@@ -226,14 +317,6 @@ while ($true) {
         # so Rainmeter keeps showing the current track.
         $active = if (-not [string]::IsNullOrWhiteSpace($title) -or
                       -not [string]::IsNullOrWhiteSpace($artist)) { 1 } else { 0 }
-
-        $source = switch ([string]$status.vendor) {
-            "Prime" { "Amazon Music" }
-            default {
-                if ([string]::IsNullOrWhiteSpace([string]$status.vendor)) { "WiiM" }
-                else { [string]$status.vendor }
-            }
-        }
 
         $content = @(
             "Active=$active"
@@ -247,7 +330,7 @@ while ($true) {
             "Duration=$(if ($durationSeconds -gt 0) { Format-Time $durationSeconds } else { '' })"
             "Progress=$progress"
             "ArtworkAvailable=$artworkAvailable"
-            "Artwork=$(if ($artworkAvailable -eq 1) { Escape-LineValue $artworkPath } else { '' })"
+            "Artwork=$(if ($artworkAvailable -eq 1) { Escape-LineValue $currentArtworkPath } else { '' })"
             ""
         ) -join "`r`n"
 
@@ -255,7 +338,7 @@ while ($true) {
         Write-WiiMStateDiagnostic -Active $active -Source $source -Title (Escape-LineValue $title) `
             -Artist (Escape-LineValue $artist) -Album (Escape-LineValue $album) `
             -ArtworkAvailable $artworkAvailable `
-            -Artwork $(if ($artworkAvailable -eq 1) { $artworkPath } else { '' }) `
+            -Artwork $(if ($artworkAvailable -eq 1) { $currentArtworkPath } else { '' }) `
             -CollectorFresh $true -Reason 'WiiM query succeeded'
         $consecutiveCollectorFailures = 0
         if (-not [string]::IsNullOrWhiteSpace($lastCollectorError)) {
