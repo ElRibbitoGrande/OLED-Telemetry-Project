@@ -15,6 +15,7 @@ if (-not $createdNew) { exit 0 }
 # Slower settings are refreshed from the Denon XML endpoints on separate schedules.
 $volumeQueryIntervalMs = 100
 $channelQueryIntervalMs = 1000
+$listeningModeQueryIntervalMs = 1000
 $fastXmlIntervalMs = 750
 $audysseyIntervalMs = 5000
 $presetIntervalMs = 10000
@@ -31,6 +32,7 @@ $reader = $null
 $writer = $null
 $nextVolumeQuery = Get-Date
 $nextChannelQuery = Get-Date
+$nextListeningModeQuery = Get-Date
 $nextFastXml = Get-Date
 $nextAudysseyXml = Get-Date
 $nextPresetXml = Get-Date
@@ -150,6 +152,7 @@ $pendingVisualCount = 0
 $requiredStableReads = 2
 
 function Close-DenonConnection {
+    $script:collectingActiveChannels = $false
     foreach ($object in @($script:reader, $script:writer, $script:stream, $script:client)) {
         if ($null -ne $object) {
             try { $object.Dispose() } catch {}
@@ -246,7 +249,8 @@ function Format-InputSignal($v) {
 function Format-ListeningMode($mode) {
     if ([string]::IsNullOrWhiteSpace($mode)) { return "" }
 
-    $clean = ([string]$mode).ToUpperInvariant()
+    $clean = ([string]$mode).Trim().ToUpperInvariant()
+    if ($clean -eq "MCH STEREO") { return "MULTICHANNEL STEREO" }
     $clean = $clean.Replace("DOLBY AUDIO - DOLBY SURROUND", "DOLBY SURROUND")
     $clean = $clean.Replace("DOLBY AUDIO - DOLBY ATMOS", "DOLBY ATMOS")
     $clean = $clean.Replace("DOLBY ATMOS - DD+", "DOLBY ATMOS")
@@ -402,11 +406,16 @@ function Process-DenonLine($line) {
     }
 
     if ($line -match "^CV(FHL|FHR|FL|FR|SL|SR|TRL|TRR|SW2|SW|C)\s+\d") {
-        if (-not $script:collectingActiveChannels) {
+        # Captured AVR output lists start with CVFL and finish with CVEND.
+        # A query timer is not a response boundary: resetting there can erase
+        # the front of a response still buffered by StreamReader.
+        if ($Matches[1] -eq 'FL') {
             $script:pendingActiveChannels.Clear()
             $script:collectingActiveChannels = $true
         }
-        [void]$script:pendingActiveChannels.Add($Matches[1])
+        if ($script:collectingActiveChannels) {
+            [void]$script:pendingActiveChannels.Add($Matches[1])
+        }
         return
     }
 
@@ -449,8 +458,8 @@ function Process-DenonLine($line) {
         return
     }
 
-    # Source and listening-mode events are useful for immediate responsiveness;
-    # the XML refresh still supplies the friendly source name and authoritative mode.
+    # TCP MS replies are the authority for the current listening mode.
+    # Decoder XML may be delayed or stale and must not overwrite this value.
     # Explicitly exclude every MSQUICK response so it can never become "Quick0".
     if ($line -match "^MS(?!QUICK)(.+)$") {
         $script:state.Mode = Format-ListeningMode $Matches[1]
@@ -468,7 +477,6 @@ function Apply-FastXml($info) {
     }
 
     $script:state.Source = Normalize-Source $source
-    $script:state.Mode = Format-ListeningMode ([string]$info.Information.Audio.SoundMode)
     $script:state.InputSignal = Format-InputSignal ([string]$info.Information.Audio.InputSignal)
     $script:state.SampleRate = [string]$info.Information.Audio.SampleRate
     Update-VisualMode
@@ -575,9 +583,8 @@ function Apply-DecoderStatusFile {
             }
         }
 
-        if ($values.ContainsKey("Mode") -and -not [string]::IsNullOrWhiteSpace($values["Mode"])) {
-            $script:state.Mode = [string]$values["Mode"]
-        }
+        # SoundMode in this slower file is diagnostic only. In particular, a
+        # failed decoder request leaves its old file intact indefinitely.
         if ($values.ContainsKey("InputSignal") -and -not [string]::IsNullOrWhiteSpace($values["InputSignal"])) {
             $script:state.InputSignal = [string]$values["InputSignal"]
         }
@@ -862,12 +869,16 @@ try {
             $nextVolumeQuery = $now.AddMilliseconds($volumeQueryIntervalMs)
         }
 
+        # Refresh listening mode even if an unsolicited change event was lost.
+        if ($null -ne $client -and $client.Connected -and $now -ge $nextListeningModeQuery) {
+            try { $writer.WriteLine("MS?") } catch {}
+            $nextListeningModeQuery = $now.AddMilliseconds($listeningModeQueryIntervalMs)
+        }
+
         # Query the AVR's live output-channel list. Process-DenonLine commits the
         # result only after CVEND, preserving the last complete map on failure.
         if ($null -ne $client -and $client.Connected -and $now -ge $nextChannelQuery) {
             try {
-                $pendingActiveChannels.Clear()
-                $collectingActiveChannels = $true
                 $writer.WriteLine("CV?")
             }
             catch {
