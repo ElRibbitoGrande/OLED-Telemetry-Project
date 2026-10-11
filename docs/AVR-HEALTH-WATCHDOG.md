@@ -192,11 +192,15 @@ Deployment backups:
 
 - `C:\RainmeterDenon\Backups\AvrWatchdog-20261011-154026` restores the original production state.
 - `C:\RainmeterDenon\Backups\AvrWatchdog-20261011-154343` restores the first watchdog deployment.
+- `C:\RainmeterDenon\Backups\AvrWatchdog-20261011-155405` restores the preceding watchdog refinement.
 
 All existing-file backup hashes were verified. The first startup comprehensive
 check took 1,223 ms; a subsequent critical verification took 262 ms. Both independently
 reported HTPC, DOLBY SURROUND, power ON and relative volume -19.5 dB (absolute 60.5).
 The Rainmeter Lua acknowledgment matched the watchdog session and consumed values.
+Final validation confirmed all seven deployed files match committed source,
+the fresh device identity matches its pinned fingerprint, and a deliberately
+wrong fingerprint is rejected. The final watchdog recorded a successful recovery.
 Critical trust, channel freshness and presentation progression were healthy;
 RESET AVR remained false. This validates software consumption, not physical pixels.
 
