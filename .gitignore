@@ -28,6 +28,11 @@ diagnostics/captures/
 diagnostics/Box1VUComparison.capture
 diagnostics/Box1VUComparison.capture.tmp
 .diagnostic-captures/
+avr_health.json
+avr_health_display.txt
+avr_collector_observation.json
+avr_recovery_request.json
+avr_presentation_ack.txt
 
 # Local conversation archive
 docs/chat-archive/

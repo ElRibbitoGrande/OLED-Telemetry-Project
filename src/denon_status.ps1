@@ -1,14 +1,29 @@
 ﻿# RainmeterDenon Telemetry 1.0 clean collector
+param([string]$Root = 'C:\RainmeterDenon', [string]$AvrHost = '', [int]$AvrPort = 23, [switch]$DisableOptionalPolling, [string]$CollectorMutexName = 'Local\RainmeterDenonStatusCollector')
 $ip = "192.168.0.128"
 $port = 23
+if ($AvrHost) { $ip = $AvrHost }
+$port = $AvrPort
 $outFile = "C:\RainmeterDenon\denon_status.txt"
 $tempFile = "C:\RainmeterDenon\denon_status.tmp"
 $heartbeatFile = "C:\RainmeterDenon\denon_heartbeat.txt"
 $decoderFile = "C:\RainmeterDenon\decoder_status.txt"
+$outFile = Join-Path $Root 'denon_status.txt'
+$tempFile = "$outFile.$PID.tmp"
+$heartbeatFile = Join-Path $Root 'denon_heartbeat.txt'
+$decoderFile = Join-Path $Root 'decoder_status.txt'
+. (Join-Path $PSScriptRoot 'Utilities\AvrHealth.ps1')
+$observed = @{}
+$session = [guid]::NewGuid().ToString()
+$receiveBuffer = ''
+$connectionStarted = [datetime]::UtcNow
+$nextIdentityQuery = Get-Date
+$lastRecoveryToken = ''
+$nextRecoveryRead = Get-Date
 
 # Prevent startup shortcuts or manual launches from creating competing collectors.
 $createdNew = $false
-$singleInstanceMutex = [System.Threading.Mutex]::new($true, "Local\RainmeterDenonStatusCollector", [ref]$createdNew)
+$singleInstanceMutex = [System.Threading.Mutex]::new($true, $CollectorMutexName, [ref]$createdNew)
 if (-not $createdNew) { exit 0 }
 
 # Fast-changing AVR events arrive over one persistent TCP connection.
@@ -22,6 +37,7 @@ $presetIntervalMs = 10000
 $quickSelectNamesIntervalMs = 10000
 $quickSelectNamesRetryIntervalMs = 10000
 $quickSelectNamesCacheFile = "C:\RainmeterDenon\Development\QuickSelectNames.xml"
+$quickSelectNamesCacheFile = Join-Path $Root 'Development\QuickSelectNames.xml'
 $reconnectDelayMs = 1000
 $loopDelayMs = 20
 $nextHeartbeat = Get-Date
@@ -91,9 +107,11 @@ $quickSelectNamesXmlTask = $null
 # Temporary XML-task diagnostics. This records task state without flooding the
 # log on every 20 ms collector loop.
 $xmlTaskDiagnosticFile = "C:\RainmeterDenon\Development\XmlTaskState.log"
+$xmlTaskDiagnosticFile = Join-Path $Root 'Development\XmlTaskState.log'
 $xmlTaskLastPendingLog = @{}
 $quickSelectNamesCurlProcess = $null
 $quickSelectNamesCurlTempFile = "C:\RainmeterDenon\Development\QuickSelectNames.live.tmp"
+$quickSelectNamesCurlTempFile = Join-Path $Root 'Development\QuickSelectNames.live.tmp'
 $quickSelectNames = @{}
 
 $state = [ordered]@{
@@ -152,6 +170,7 @@ $pendingVisualCount = 0
 $requiredStableReads = 2
 
 function Close-DenonConnection {
+    $script:receiveBuffer = ''
     $script:collectingActiveChannels = $false
     foreach ($object in @($script:reader, $script:writer, $script:stream, $script:client)) {
         if ($null -ne $object) {
@@ -169,8 +188,11 @@ function Connect-Denon {
 
     $script:client = [System.Net.Sockets.TcpClient]::new()
     $script:client.NoDelay = $true
-    $script:client.Connect($script:ip, $script:port)
+    $connect = $script:client.ConnectAsync($script:ip, $script:port)
+    if (-not $connect.Wait(1500)) { throw 'Denon connect timeout' }
     $script:stream = $script:client.GetStream()
+    $script:stream.WriteTimeout = 1000
+    $script:connectionStarted = [datetime]::UtcNow
     $script:reader = [System.IO.StreamReader]::new($script:stream, [System.Text.Encoding]::ASCII, $false, 1024, $true)
     $script:writer = [System.IO.StreamWriter]::new($script:stream, [System.Text.Encoding]::ASCII, 1024, $true)
     $script:writer.NewLine = "`r"
@@ -178,6 +200,7 @@ function Connect-Denon {
 
     # Seed the live values immediately. Subsequent changes are pushed by the AVR.
     $script:writer.WriteLine("MV?")
+    $script:writer.WriteLine("PW?")
     $script:writer.WriteLine("SI?")
     $script:writer.WriteLine("MS?")
     $script:writer.WriteLine("MSQUICK ?")
@@ -390,12 +413,18 @@ function Update-VisualMode {
 function Process-DenonLine($line) {
     if ([string]::IsNullOrWhiteSpace($line)) { return }
     $line = $line.Trim()
+    if ($line -match '^PW(ON|STANDBY)$') {
+        $script:state.Power = $Matches[1]
+        $script:observed.Power = Get-AvrEpoch
+        return
+    }
 
     # CV? returns one CV<channel> row for every currently active AVR output and
     # closes the transaction with CVEND. Commit only complete transactions so a
     # reconnect or partial response cannot blank or partially freeze the map.
     if ($line -eq "CVEND") {
         if ($script:collectingActiveChannels) {
+            $script:observed.Channels = Get-AvrEpoch
             foreach ($channel in $script:activeChannelStateKeys.Keys) {
                 $stateKey = $script:activeChannelStateKeys[$channel]
                 $script:state[$stateKey] = if ($script:pendingActiveChannels.Contains($channel)) { 1 } else { 0 }
@@ -422,7 +451,10 @@ function Process-DenonLine($line) {
     # Volume responses must be handled before the more general MS handlers.
     if ($line -match "^MV\d{2,3}$") {
         $converted = Convert-DenonVolume $line
-        if ($converted) { $script:state.Volume = $converted }
+        if ($converted) {
+            $script:state.Volume = $converted
+            $script:observed.Volume = Get-AvrEpoch
+        }
         return
     }
 
@@ -454,6 +486,7 @@ function Process-DenonLine($line) {
         $rawSource = $Matches[1].Trim()
 
         $script:state.Source = Normalize-Source $rawSource
+        $script:observed.Source = Get-AvrEpoch
         Update-PresentationState
         return
     }
@@ -463,6 +496,7 @@ function Process-DenonLine($line) {
     # Explicitly exclude every MSQUICK response so it can never become "Quick0".
     if ($line -match "^MS(?!QUICK)(.+)$") {
         $script:state.Mode = Format-ListeningMode $Matches[1]
+        $script:observed.Mode = Get-AvrEpoch
         Update-VisualMode
         return
     }
@@ -585,6 +619,15 @@ function Apply-DecoderStatusFile {
 
         # SoundMode in this slower file is diagnostic only. In particular, a
         # failed decoder request leaves its old file intact indefinitely.
+        $updated = [datetime]::MinValue
+        if (-not [datetime]::TryParse([string]$values['Updated'], [ref]$updated) -or
+            ((Get-Date) - $updated).TotalSeconds -gt 45 -or $updated -gt (Get-Date).AddSeconds(2)) {
+            $script:state.InputSignal = ''
+            $script:state.SampleRate = ''
+            Update-VisualMode
+            return
+        }
+        $script:observed.Decoder = [DateTimeOffset]::new($updated).ToUnixTimeSeconds()
         if ($values.ContainsKey("InputSignal") -and -not [string]::IsNullOrWhiteSpace($values["InputSignal"])) {
             $script:state.InputSignal = [string]$values["InputSignal"]
         }
@@ -810,19 +853,11 @@ ActiveSUB2=$($script:state.ActiveSUB2)
     $script:lastStatusText = $statusText
 }
 
-# Preserve the working display during startup by importing the last known status file.
-if (Test-Path $outFile) {
-    foreach ($line in Get-Content $outFile -ErrorAction SilentlyContinue) {
-        if ($line -match "^([^=]+)=(.*)$") {
-            $key = $Matches[1]
-            $value = $Matches[2]
-            if ($key -eq "Volume") { $value = $value -replace "\s*dB\s*$", "" }
-            if ($state.Contains($key)) { $state[$key] = $value }
-        }
-    }
-    $state.Source = Normalize-Source $state.Source
-    $lastVisualMode = [string]$state.VisualMode
-    Update-PresentationState
+# Historical output remains on disk for diagnostics only; never seed live state.
+$state.Power = ''
+Write-StatusIfChanged
+Write-AvrJson (Join-Path $Root 'avr_collector_observation.json') @{
+    Epoch=Get-AvrEpoch;Session=$session;PID=$PID;Observed=$observed;Values=$state;Connected=$false
 }
 
 # Load the known-good local name cache immediately so Quick Select labels work
@@ -848,10 +883,18 @@ try {
 
         if ($null -ne $client -and $client.Connected) {
             try {
-                # Drain every unsolicited AVR event currently waiting on the socket.
+                # CR framing, without a blocking line reader or hidden buffering.
                 while ($stream.DataAvailable) {
-                    $line = $reader.ReadLine()
-                    Process-DenonLine $line
+                    $bytes = New-Object byte[] 4096
+                    $count = $stream.Read($bytes, 0, $bytes.Length)
+                    if ($count -eq 0) { throw 'Denon connection closed' }
+                    $receiveBuffer += [Text.Encoding]::ASCII.GetString($bytes, 0, $count)
+                    while ($receiveBuffer.Contains("`r")) {
+                        $end = $receiveBuffer.IndexOf("`r")
+                        Process-DenonLine ($receiveBuffer.Substring(0, $end).Trim("`n"))
+                        $receiveBuffer = $receiveBuffer.Substring($end + 1)
+                    }
+                    if ($receiveBuffer.Length -gt 8192) { throw 'Invalid oversized Denon frame' }
                 }
             }
             catch {
@@ -861,6 +904,33 @@ try {
         }
 
         $now = Get-Date
+
+        if ($now -ge $nextRecoveryRead) { try {
+            $request = Read-AvrJson (Join-Path $Root 'avr_recovery_request.json')
+            if ($request -and $request.Token -ne $lastRecoveryToken -and
+                ((Get-AvrEpoch) - [double]$request.Created) -lt 30) {
+                $lastRecoveryToken = $request.Token
+                if ($request.Action -eq 'Reconnect') { Close-DenonConnection }
+                $nextIdentityQuery = $now
+                $nextChannelQuery = $now
+                $nextListeningModeQuery = $now
+                $nextQuickSelectNamesXml = $now
+                $nextAudysseyXml = $now
+                $nextPresetXml = $now
+            }
+        } catch {}; $nextRecoveryRead = $now.AddSeconds(1) }
+        if ($null -ne $client -and $client.Connected -and $now -ge $nextIdentityQuery) {
+            try { $writer.WriteLine('SI?'); $writer.WriteLine('PW?') }
+            catch { Close-DenonConnection }
+            $nextIdentityQuery = $now.AddSeconds(1)
+        }
+        if ($null -ne $client -and $client.Connected -and
+            ([datetime]::UtcNow - $connectionStarted).TotalSeconds -gt 15 -and $state.Power -ne 'STANDBY') {
+            $epoch = Get-AvrEpoch
+            if (@('Power','Source','Volume','Mode' | Where-Object {
+                -not $observed.ContainsKey($_) -or $epoch - [double]$observed[$_] -gt 15
+            }).Count -gt 0) { Close-DenonConnection; $nextReconnect = $now.AddSeconds(5) }
+        }
 
         # Do not depend on unsolicited Denon events. Ask for volume ten times per
         # second over the already-open socket; the reply is handled above.
@@ -911,7 +981,7 @@ try {
         # Select-name request priority and do not launch Audyssey/preset requests
         # while it is in flight; otherwise type=7 can repeatedly time out behind
         # the other XML polls even though the endpoint works in a browser.
-        if ($null -eq $quickSelectNamesCurlProcess -and
+        if (-not $DisableOptionalPolling -and $null -eq $quickSelectNamesCurlProcess -and
             $null -eq $audysseyXmlTask -and
             $null -eq $presetXmlTask -and
             $now -ge $nextQuickSelectNamesXml) {
@@ -920,7 +990,7 @@ try {
             $nextQuickSelectNamesXml = $now.AddMilliseconds($quickSelectNamesIntervalMs)
         }
 
-        if ($null -eq $quickSelectNamesCurlProcess -and
+        if (-not $DisableOptionalPolling -and $null -eq $quickSelectNamesCurlProcess -and
             $null -eq $audysseyXmlTask -and
             $now -ge $nextAudysseyXml) {
 
@@ -928,7 +998,7 @@ try {
             $nextAudysseyXml = $now.AddMilliseconds($audysseyIntervalMs)
         }
 
-        if ($null -eq $quickSelectNamesCurlProcess -and
+        if (-not $DisableOptionalPolling -and $null -eq $quickSelectNamesCurlProcess -and
             $null -eq $presetXmlTask -and
             $now -ge $nextPresetXml) {
 
@@ -945,6 +1015,12 @@ try {
         }
 
         if ((Get-Date) -ge $nextHeartbeat) {
+            Write-AvrJson (Join-Path $Root 'avr_collector_observation.json') @{
+                Epoch = Get-AvrEpoch; Session = $session; PID = $PID
+                Observed = $observed; Values = $state
+                Connected = ($null -ne $client -and $client.Connected)
+                RecoveryToken = $lastRecoveryToken
+            }
             Set-Content -LiteralPath $heartbeatFile -Value (Get-Date -Format 'o') -Encoding ASCII
             $nextHeartbeat = (Get-Date).AddSeconds(2)
         }

@@ -19,6 +19,7 @@ if ([string]::IsNullOrWhiteSpace($LauncherPath)) {
 
 $scriptPaths = @(
     (Join-Path $Root 'TelemetryManager.ps1')
+    (Join-Path $Root 'AvrWatchdog.ps1')
     (Join-Path $Root 'denon_status.ps1')
     (Join-Path $Root 'DecoderCollector.ps1')
     (Join-Path $Root 'Box1Collector.ps1')

@@ -17,6 +17,7 @@ $DenonScript = Join-Path $Root 'denon_status.ps1'
 $RouterScript = Join-Path $NowPlaying 'NowPlayingRouter.ps1'
 $DecoderScript = Join-Path $Root 'DecoderCollector.ps1'
 $Box1Script = Join-Path $Root 'Box1Collector.ps1'
+$WatchdogScript = Join-Path $Root 'AvrWatchdog.ps1'
 $HotkeyScript = Join-Path $Root 'Utilities\RainmeterRefreshHotkey.ps1'
 
 $DenonHeartbeat = Join-Path $Root 'denon_heartbeat.txt'
@@ -292,6 +293,16 @@ try {
             Start-Collector $RouterScript 'Now Playing router'
             Start-Collector $DecoderScript 'Decoder collector'
             Start-Collector $Box1Script 'Box 1 collector'
+            Start-Collector $WatchdogScript 'AVR health watchdog'
+            try {
+                $watchdogs = @(Find-Collector $WatchdogScript)
+                if ($watchdogs.Count -eq 1 -and
+                    ((Get-Date) - $watchdogs[0].CreationDate).TotalSeconds -gt 60 -and
+                    (AgeSeconds (Join-Path $Root 'avr_health.json')) -gt 60) {
+                    Log 'Watchdog publication stale; restarting isolated watchdog.'
+                    Stop-Collector $WatchdogScript
+                }
+            } catch { Log-Throttled -Key 'WatchdogSupervision' -Message $_.Exception.Message }
             Start-HotkeyListener
 
             try {

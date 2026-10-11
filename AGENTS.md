@@ -45,3 +45,10 @@ For every proposed PowerShell change:
 Investigate intermittent partial display freezing before adding new features.
 Do not perform a broad architectural rewrite until the current failure has
 been understood and documented.
+
+## AVR health watchdog operations
+
+- AvrWatchdog is independently supervised; heartbeat/process presence is not authoritative freshness. Trust requires fresh per-field receives plus independent read-only verification.
+- RESET AVR requires sustained failed control queries, failed bounded recovery, stale collector observations and fresh exact-model HEOS identification. Ambiguous networking failures and standby must remain silent.
+- Fresh network replies cannot establish physical front-panel correctness; preserve that diagnostic limitation.
+- Deploy only the explicit watchdog file manifest. Preserve unrelated VU/artwork/hotkey/pixel-shift changes. Rollback and health diagnostics are documented in docs/AVR-HEALTH-WATCHDOG.md.

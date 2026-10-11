@@ -1,4 +1,6 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\src\Utilities\AvrHealth.ps1')
+$observed=@{}
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\src\denon_status.ps1'),[ref]$tokens,[ref]$errors)
 if ($errors) { throw ($errors | Out-String) }
@@ -12,7 +14,7 @@ $collectingActiveChannels=$false
 $decoderFile=Join-Path $PSScriptRoot 'captures\authority-test.txt'
 [void][IO.Directory]::CreateDirectory((Split-Path $decoderFile))
 try {
-    [IO.File]::WriteAllText($decoderFile,"Mode=DOLBY SURROUND`nInputSignal=Stereo PCM`nSampleRate=48 kHz`nUpdated=2000-01-01")
+    [IO.File]::WriteAllText($decoderFile,"Mode=DOLBY SURROUND`nInputSignal=Stereo PCM`nSampleRate=48 kHz`nUpdated=$(Get-Date -Format o)")
     foreach ($source in @('HTPC','LYR+')) {
         $state.Source=$source
         foreach ($case in @(@('STEREO','STEREO'),@('DOLBY SURROUND','DOLBY SURROUND'),@('MCH STEREO','MULTICHANNEL STEREO'),@('STEREO','STEREO'))) {
@@ -24,6 +26,9 @@ try {
             if ($state.InputSignal -ne 'Stereo PCM') {throw 'Separate decoder signal import failed'}
         }
     }
+    [IO.File]::WriteAllText($decoderFile,"Mode=DOLBY ATMOS`nInputSignal=Dolby Atmos`nUpdated=2000-01-01")
+    Apply-DecoderStatusFile
+    if ($state.Mode -ne 'STEREO' -or $state.InputSignal -ne '') {throw 'Expired decoder state was trusted'}
     $decoderFile += '.missing'
     Apply-DecoderStatusFile
     if ($state.Mode -ne 'STEREO') {throw 'Missing decoder changed mode'}
