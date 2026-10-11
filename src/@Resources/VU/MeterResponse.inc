@@ -1,6 +1,17 @@
 ; Shared presentation gating and normalized display measures.
 ; Requires DashboardState.inc and the selected meter response variables.
 
+[Variables]
+; Provisional level alignment from paired Aja/Corea captures (~4 dB).
+DashboardBox1CalibrationGain=1.6
+
+[DashboardVUAdaptiveGain]
+Measure=Script
+ScriptFile=#@#VU\AdaptiveGain.lua
+CoreFile=#@#VU\AdaptiveGainCore.lua
+MinValue=0
+MaxValue=1
+
 [DashboardBox1VUCurrentLeft]
 Measure=Calc
 Formula=Clamp(DashboardRawBox1RmsEnvelopeLeft * #DashboardVUGain#, 0, 1)
@@ -17,14 +28,14 @@ DynamicVariables=1
 
 [DashboardVUDisplayLeft]
 Measure=Calc
-Formula=(DashboardBox1Usable ? DashboardBox1VUCurrentLeft : (DashboardVURawLeft * DashboardLevelSourceCode))
+Formula=Clamp((DashboardBox1Usable ? DashboardRawBox1RmsEnvelopeLeft * #DashboardBox1CalibrationGain# : DashboardVUEnvelopeLeft * DashboardLevelSourceCode) * #DashboardVUGain# * DashboardVUAdaptiveGain, 0, 1)
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1
 
 [DashboardVUDisplayRight]
 Measure=Calc
-Formula=(DashboardBox1Usable ? DashboardBox1VUCurrentRight : (DashboardVURawRight * DashboardLevelSourceCode))
+Formula=Clamp((DashboardBox1Usable ? DashboardRawBox1RmsEnvelopeRight * #DashboardBox1CalibrationGain# : DashboardVUEnvelopeRight * DashboardLevelSourceCode) * #DashboardVUGain# * DashboardVUAdaptiveGain, 0, 1)
 MinValue=#DashboardVUCalibrationMin#
 MaxValue=#DashboardVUCalibrationMax#
 DynamicVariables=1

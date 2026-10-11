@@ -108,6 +108,13 @@ function Initialize()
     measures.box1FinalRight = getMeasure('Box1FinalRightMeasure')
     measures.box1Sequence = getMeasure('Box1SequenceMeasure')
     measures.source = getMeasure('SourceMeasure')
+    measures.windowsEnvelopeLeft = SKIN:GetMeasure('DashboardVUEnvelopeLeft')
+    measures.windowsEnvelopeRight = SKIN:GetMeasure('DashboardVUEnvelopeRight')
+    measures.box1EnvelopeLeft = SKIN:GetMeasure('DashboardRawBox1RmsEnvelopeLeft')
+    measures.box1EnvelopeRight = SKIN:GetMeasure('DashboardRawBox1RmsEnvelopeRight')
+    measures.displayLeft = SKIN:GetMeasure('DashboardVUDisplayLeft')
+    measures.displayRight = SKIN:GetMeasure('DashboardVUDisplayRight')
+    measures.adaptiveGain = SKIN:GetMeasure('DashboardVUAdaptiveGain')
     updateMs = math.max(1, tonumber(SELF:GetOption('UpdateMs', '32')) or 32)
 
     local control = readControl(SELF:GetOption('ControlFile', ''))
@@ -118,7 +125,7 @@ function Initialize()
     captureId = control.CaptureId
     captureDirectory = control.CaptureDirectory
     rows = {
-        'EpochSecond,RainmeterFrame,NominalElapsedMs,Source,WindowsRawLeft,WindowsRawRight,Box1LeftRmsDb,Box1RightRmsDb,Box1PreLeft,Box1PreRight,Box1FinalLeft,Box1FinalRight,Box1Sequence'
+        'EpochSecond,RainmeterFrame,NominalElapsedMs,Source,WindowsRawLeft,WindowsRawRight,Box1LeftRmsDb,Box1RightRmsDb,Box1PreLeft,Box1PreRight,Box1FinalLeft,Box1FinalRight,Box1Sequence,WindowsEnvelopeLeft,WindowsEnvelopeRight,Box1EnvelopeLeft,Box1EnvelopeRight,DisplayLeft,DisplayRight,AdaptiveGain,Box1CalibrationGain'
     }
     frame = 0
     stopped = false
@@ -150,7 +157,15 @@ function Update()
         string.format('%.17g', getNumber(measures.box1PreRight)),
         string.format('%.17g', getNumber(measures.box1FinalLeft)),
         string.format('%.17g', getNumber(measures.box1FinalRight)),
-        string.format('%.0f', getNumber(measures.box1Sequence))
+        string.format('%.0f', getNumber(measures.box1Sequence)),
+        string.format('%.17g', getNumber(measures.windowsEnvelopeLeft)),
+        string.format('%.17g', getNumber(measures.windowsEnvelopeRight)),
+        string.format('%.17g', getNumber(measures.box1EnvelopeLeft)),
+        string.format('%.17g', getNumber(measures.box1EnvelopeRight)),
+        string.format('%.17g', getNumber(measures.displayLeft)),
+        string.format('%.17g', getNumber(measures.displayRight)),
+        string.format('%.17g', getNumber(measures.adaptiveGain)),
+        tostring(SKIN:GetVariable('DashboardBox1CalibrationGain','1'))
     }
     rows[#rows + 1] = table.concat(fields, ',')
     frame = frame + 1
