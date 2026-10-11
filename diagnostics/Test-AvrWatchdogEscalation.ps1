@@ -21,7 +21,12 @@ function Start-Sleep {
         }
     }
 }
-function Get-AvrIdentity {param($AvrHost) return $AvrHost -ne 'network-failure'}
+function Get-AvrIdentity {
+    param($AvrHost,$ExpectedFingerprint,[switch]$FingerprintOnly)
+    if($FingerprintOnly){return ('F'*64)}
+    return $AvrHost -ne 'network-failure' -and $ExpectedFingerprint -eq ('F'*64)
+}
+function Get-AvrNetworkEvidence {param($AvrHost) return @{Epoch=Get-AvrEpoch;LocalInterfaceUp=$true;GatewayIcmp=($AvrHost -ne 'network-failure');AvrIcmp=$false;Limit='Injected network observations'}}
 function Get-AvrVerification {
     param($AvrHost,$Port,[switch]$Comprehensive)
     $elapsed=$script:virtualEpoch-2000000000
@@ -43,8 +48,9 @@ foreach($scenario in @('avr-control','network-failure','healthy-collector','stan
     [void][IO.Directory]::CreateDirectory($fixtureRoot)
     Copy-Item (Join-Path $source 'denon_status.ps1') $fixtureRoot
     # A previous successful query is historical eligibility evidence only.
-    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'avr_health.json'),'{"BaselineVerified":true}')
-    & $harness -Root $fixtureRoot -AvrHost $scenario -MaximumCycles 160 -DisableRecovery
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'avr_health.json'),(@{BaselineVerified=$true;LastVerifiedPower='ON';DeviceFingerprint=('F'*64)}|ConvertTo-Json))
+    $cycles=if($scenario -eq 'healthy'){360}else{160}
+    & $harness -Root $fixtureRoot -AvrHost $scenario -MaximumCycles $cycles -DisableRecovery -WatchdogMutexName ('Local\AvrWatchdogTest'+[guid]::NewGuid())
     $records=@(Get-Content (Join-Path $fixtureRoot 'Logs\AvrWatchdog.jsonl') | ForEach-Object {$_|ConvertFrom-Json})
     $warnings=@($records|Where-Object {$_.Event -eq 'Health' -and $_.Detail.ResetAvr})
     if(($scenario -eq 'avr-control') -ne ($warnings.Count -gt 0)) {throw "Wrong warning behavior: $scenario"}
@@ -52,6 +58,7 @@ foreach($scenario in @('avr-control','network-failure','healthy-collector','stan
     if($health.ResetAvr -or -not $health.Trusted) {throw "Recovery did not clear warning and verify state: $scenario"}
     $actions=@($records|Where-Object {$_.Event -eq 'RecoveryAttempt'})
     if($actions.Count -gt 3) {throw "Recovery oscillation: $scenario"}
+    if($scenario -eq 'healthy' -and $health.LastComprehensiveReconciliation -lt 2000000600){throw 'Ten-minute comprehensive verification did not recur'}
     "PASS: $scenario prolonged failure, bounded escalation, warning criteria, automatic clearing and recovery"
 }
 "Evidence preserved at $rootBase"

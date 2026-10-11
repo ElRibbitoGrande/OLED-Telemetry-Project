@@ -88,7 +88,7 @@ function Get-AvrVerification {
     $result.Standby = $result.Values.Power -eq 'STANDBY'
     return $result
 }
-function Get-AvrIdentity([string]$AvrHost) {
+function Get-AvrIdentity([string]$AvrHost, [string]$ExpectedFingerprint='', [switch]$FingerprintOnly) {
     # HEOS device description is a separate service; identify the exact model.
     # ICMP or an open port alone must never enable RESET AVR.
     try {
@@ -96,7 +96,14 @@ function Get-AvrIdentity([string]$AvrHost) {
         $raw = & $curl --silent --show-error --noproxy '*' --connect-timeout 1 --max-time 2 --max-filesize 65536 "http://${AvrHost}:60006/upnp/desc/aios_device/aios_device.xml" 2>$null
         if ($LASTEXITCODE -ne 0) { return $false }
         [xml]$xml = $raw -join "`n"
-        return ($xml.SelectSingleNode("//*[local-name()='device']/*[local-name()='modelName']").InnerText -eq 'Denon AVR-X3700H')
+        $model=$xml.SelectSingleNode("//*[local-name()='device']/*[local-name()='modelName']").InnerText
+        $udn=$xml.SelectSingleNode("//*[local-name()='device']/*[local-name()='UDN']").InnerText
+        if($model -ne 'Denon AVR-X3700H' -or -not $udn){return $false}
+        $hash=[Security.Cryptography.SHA256]::Create()
+        try {$fingerprint=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($model+'|'+$udn))).Replace('-','')}
+        finally {$hash.Dispose()}
+        if($FingerprintOnly){return $fingerprint}
+        return ($ExpectedFingerprint -ne '' -and $fingerprint -eq $ExpectedFingerprint)
     } catch { return $false }
 }
 function Get-AvrCollectorFresh($Observation, [double]$Now) {
@@ -108,7 +115,31 @@ function Get-AvrCollectorFresh($Observation, [double]$Now) {
     return $true
 }
 function Get-AvrResetEligible {
-    param([int]$Failures, [double]$FailureSeconds, [bool]$IdentityVerified, [bool]$CollectorFresh, [bool]$ReconnectAttempted, [bool]$RestartAttempted, [bool]$BaselineVerified)
+    param([int]$Failures, [double]$FailureSeconds, [bool]$IdentityVerified, [bool]$CollectorFresh, [bool]$ReconnectAttempted, [bool]$RestartAttempted, [bool]$BaselineVerified, [string]$PowerBeforeFailure='ON')
     return ($Failures -ge 6 -and $FailureSeconds -ge 180 -and $IdentityVerified -and
-        -not $CollectorFresh -and $ReconnectAttempted -and $RestartAttempted -and $BaselineVerified)
+        -not $CollectorFresh -and $ReconnectAttempted -and $RestartAttempted -and $BaselineVerified -and $PowerBeforeFailure -eq 'ON')
+}
+function Get-AvrNetworkEvidence([string]$AvrHost) {
+    $result=@{Epoch=Get-AvrEpoch;LocalInterfaceUp=$false;GatewayIcmp=$null;AvrIcmp=$null;Limit='ICMP failure is inconclusive; no reset decision depends on it'}
+    try {
+        $adapters=@([Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() | Where-Object {
+            $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback'
+        })
+        $result.LocalInterfaceUp=$adapters.Count -gt 0
+        $gateway=$null
+        foreach($adapter in $adapters) {
+            foreach($address in $adapter.GetIPProperties().GatewayAddresses) {
+                if($address.Address.AddressFamily -eq 'InterNetwork' -and $address.Address.ToString() -ne '0.0.0.0') {$gateway=$address.Address;break}
+            }
+            if($gateway){break}
+        }
+        $ping=[Net.NetworkInformation.Ping]::new()
+        try {
+            if($gateway){try {$result.GatewayIcmp=$ping.Send($gateway,300).Status -eq 'Success'}catch{$result.GatewayIcmp=$false}}
+            # Only literal configured addresses: avoid unbounded DNS resolution.
+            $address=$null
+            if([Net.IPAddress]::TryParse($AvrHost,[ref]$address)) {try {$result.AvrIcmp=$ping.Send($address,300).Status -eq 'Success'}catch{$result.AvrIcmp=$false}}
+        } finally {$ping.Dispose()}
+    } catch {$result.Error=$_.Exception.Message}
+    return $result
 }

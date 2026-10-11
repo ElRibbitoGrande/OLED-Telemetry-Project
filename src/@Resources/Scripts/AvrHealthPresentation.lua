@@ -38,7 +38,7 @@ function Update()
         SKIN:Bang(valid and '!ShowMeter' or '!HideMeter', name)
     end
     for _, channel in ipairs({'FHL','FHR','FL','C','FR','SL','SR','TRL','TRR'}) do
-        local active = valid and tonumber(measure('DashboardActive' .. channel)) == 1
+        local active = valid and state.ChannelsFresh == '1' and tonumber(measure('DashboardActive' .. channel)) == 1
         SKIN:Bang(active and '!ShowMeter' or '!HideMeter', 'AF2' .. channel)
     end
     if not valid then
@@ -66,7 +66,8 @@ function Update()
             file:write('Epoch=' .. now .. '\nSession=' .. (state.Session or '') ..
                 '\nSource=' .. measure('DashboardRawSource') ..
                 '\nMode=' .. measure('DashboardRawListeningMode') ..
-                '\nVolume=' .. measure('DashboardRawVolume') .. '\n')
+                '\nVolume=' .. measure('DashboardRawVolume') ..
+                '\nWarningHidden=' .. tostring(SKIN:GetMeter('AF2AvrWarningTitle'):GetOption('Hidden','1')) .. '\n')
             file:close()
             os.remove(ackPath)
             os.rename(ackPath .. '.tmp', ackPath)

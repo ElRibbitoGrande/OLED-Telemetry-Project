@@ -32,6 +32,8 @@ $copy=$argsPolicy.Clone();$copy.Failures=1
 Assert (-not (Get-AvrResetEligible @copy)) 'Single timeout cannot trigger warning'
 $copy=$argsPolicy.Clone();$copy.FailureSeconds=90
 Assert (-not (Get-AvrResetEligible @copy)) 'Temporary failure remains silent'
+$copy=$argsPolicy.Clone();$copy.PowerBeforeFailure='STANDBY'
+Assert (-not (Get-AvrResetEligible @copy)) 'Previous verified standby prevents ambiguous power-save control outages from recommending reset'
 
 # Local CR-fragmenting fake AVR; background .NET threads never touch physical AVR.
 if (-not ('AvrFixture' -as [type])) {
@@ -109,11 +111,11 @@ try {
     foreach($key in @('Power','Source','Mode','Volume')) {$observation.Observed.$key=$now}
     Write-AvrJson (Join-Path $testRoot 'avr_collector_observation.json') $observation
     [IO.File]::WriteAllText((Join-Path $testRoot 'denon_status.txt'),"Source=HTPC`nMode=DOLBY SURROUND`nVolume=-19.5 dB`n")
-    & (Join-Path $source 'AvrWatchdog.ps1') -Root $testRoot -AvrHost '127.0.0.1' -Port $server.Port -MaximumCycles 1 -DisableRecovery
+    & (Join-Path $source 'AvrWatchdog.ps1') -Root $testRoot -AvrHost '127.0.0.1' -Port $server.Port -MaximumCycles 1 -DisableRecovery -WatchdogMutexName ('Local\AvrWatchdogTest'+[guid]::NewGuid())
     $health=Read-AvrJson (Join-Path $testRoot 'avr_health.json')
     Assert ($health.Overall -eq 'Healthy' -and $health.Trusted -and -not $health.ResetAvr) 'Isolated watchdog integration verifies healthy canonical state silently'
     [IO.File]::WriteAllText((Join-Path $testRoot 'denon_status.txt'),"Source=LYR+`nMode=STEREO`nVolume=-28.5 dB`n")
-    & (Join-Path $source 'AvrWatchdog.ps1') -Root $testRoot -AvrHost '127.0.0.1' -Port $server.Port -MaximumCycles 1 -DisableRecovery
+    & (Join-Path $source 'AvrWatchdog.ps1') -Root $testRoot -AvrHost '127.0.0.1' -Port $server.Port -MaximumCycles 1 -DisableRecovery -WatchdogMutexName ('Local\AvrWatchdogTest'+[guid]::NewGuid())
     $health=Read-AvrJson (Join-Path $testRoot 'avr_health.json')
     Assert ($health.Overall -eq 'StateMismatch' -and -not $health.Trusted -and -not $health.ResetAvr) 'Stale canonical/source/logo input is detected without blaming AVR'
     [void][IO.Directory]::CreateDirectory((Join-Path $testRoot 'Utilities'))

@@ -1,5 +1,10 @@
 # Current OLED Telemetry System Map
 
+> The independent AVR health watchdog deployed on 2026-10-11 supersedes the
+> historical freshness/recovery baseline below. See
+> [`AVR-HEALTH-WATCHDOG.md`](AVR-HEALTH-WATCHDOG.md) for current AVR authority,
+> recovery, presentation and rollback semantics.
+
 > Historical scope note: this document records the pre-Box-1 architecture
 > investigated during the original partial-freeze audit. Statements below
 > that the VU path is AudioLevel-only or that no registry IPC exists describe

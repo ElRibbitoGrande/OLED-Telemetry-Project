@@ -5,7 +5,8 @@ param(
     [int]$Port = 23,
     [int]$VerificationSeconds = 45,
     [int]$MaximumCycles = 0,
-    [switch]$DisableRecovery
+    [switch]$DisableRecovery,
+    [string]$WatchdogMutexName = 'Local\RainmeterDenonAvrWatchdog'
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Utilities\AvrHealth.ps1')
@@ -18,7 +19,7 @@ if (-not $AvrHost) {
     else { throw 'AVR address absent in collector configuration' }
 }
 $created = $false
-$mutex = [Threading.Mutex]::new($true, 'Local\RainmeterDenonAvrWatchdog', [ref]$created)
+$mutex = [Threading.Mutex]::new($true, $WatchdogMutexName, [ref]$created)
 if (-not $created) { $mutex.Dispose(); exit }
 $statusPath = Join-Path $Root 'avr_health.json'
 $displayPath = Join-Path $Root 'avr_health_display.txt'
@@ -29,10 +30,15 @@ $previousHealth = Read-AvrJson $statusPath
 $nextVerify = 0; $nextComprehensive = 0; $lastVerify = 0; $lastComprehensive = 0
 $failures = 0; $failureStart = 0; $baseline = $false; $level = 0
 if ($previousHealth -and ($previousHealth.BaselineVerified -or $previousHealth.LastIndependentVerification -gt 0)) { $baseline = $true }
+$lastVerifiedPower = [string]$previousHealth.LastVerifiedPower
+$deviceFingerprint = [string]$previousHealth.DeviceFingerprint
+if (-not $lastVerifiedPower -and $previousHealth.Collector.Values.Power) { $lastVerifiedPower=[string]$previousHealth.Collector.Values.Power }
 $nextRecovery = 0; $lastRecovery = ''; $recoveredAt = 0; $faultSince = 0
 $lastClass = ''; $lastLog = 0; $verification = $null; $mismatches = @()
 $reconnectAttempted = $false; $restartAttempted = $false; $lastRestart = 0
 $lastPresentationRepair = 0; $presentationAttempts = 0; $cycle = 0
+$decoderRestartAttempted = $false; $lastDecoderRestart = 0
+$networkEvidence = $null
 function Write-WatchdogEvent([string]$Event, $Detail) {
     try {
         if ((Test-Path $logPath) -and (Get-Item $logPath).Length -gt 1MB) {
@@ -65,18 +71,26 @@ try {
                 $verification = Get-AvrVerification -AvrHost $AvrHost -Port $Port -Comprehensive:$comprehensive
                 $now = Get-AvrEpoch
                 if ($verification.Valid) {
+                    $networkEvidence = $null
+                    $lastVerifiedPower = [string]$verification.Values.Power
+                    if (-not $deviceFingerprint) {
+                        $fingerprint = Get-AvrIdentity -AvrHost $AvrHost -FingerprintOnly
+                        if ($fingerprint -is [string] -and $fingerprint.Length -eq 64) { $deviceFingerprint=$fingerprint }
+                    }
                     $lastVerify = $now; $baseline = $true; $failures = 0; $failureStart = 0
                     if ($comprehensive -and $verification.ChannelsComplete) {
                         $lastComprehensive = $now; $nextComprehensive = $now + 600
                         Request-AvrRecovery 'Reconcile'
                     }
                 } elseif ($verification.Standby) {
+                    $lastVerifiedPower = 'STANDBY'
                     $failures=0; $failureStart=0; $script:warningUntil=0
                 } else {
                     $failures++
                     if (-not $failureStart) { $failureStart = $now }
                     # Only a fresh exact AVR identity response supports AVR-side inference.
-                    $identity = Get-AvrIdentity $AvrHost
+                    $identity = Get-AvrIdentity -AvrHost $AvrHost -ExpectedFingerprint $deviceFingerprint
+                    $networkEvidence = Get-AvrNetworkEvidence $AvrHost
                 }
                 $nextVerify = $now + $(if (($verification.Valid -and $fresh) -or $verification.Standby) { [math]::Max(30,$VerificationSeconds) } else { 15 })
                 Write-WatchdogEvent 'IndependentVerification' $verification
@@ -84,6 +98,24 @@ try {
             $observation = Read-AvrJson (Join-Path $Root 'avr_collector_observation.json')
             $fresh = Get-AvrCollectorFresh $observation $now
             $canonical = Read-AvrFields (Join-Path $Root 'denon_status.txt')
+            $decoder = Read-AvrFields (Join-Path $Root 'decoder_status.txt')
+            $decoderUpdated = [datetime]::MinValue
+            $decoderFresh = [datetime]::TryParse([string]$decoder['Updated'],[ref]$decoderUpdated) -and
+                ((Get-Date)-$decoderUpdated).TotalSeconds -le 45 -and $decoderUpdated -le (Get-Date).AddSeconds(2) -and
+                -not [string]::IsNullOrWhiteSpace([string]$decoder['InputSignal'])
+            if ($decoderFresh) { $decoderRestartAttempted=$false }
+            elseif (-not $decoderRestartAttempted -and $now-$lastDecoderRestart -ge 600 -and $cycle -ge 15) {
+                # The decoder's heartbeat can advance on failures. Try one targeted
+                # restart per outage; continued endpoint failure never restarts TCP,
+                # artwork, Box1, Rainmeter, or recommends RESET AVR by itself.
+                if (-not $DisableRecovery) {
+                    foreach($process in @(Get-TelemetryScriptProcesses -ScriptPath (Join-Path $Root 'DecoderCollector.ps1'))) {
+                        [void](Stop-TelemetryScriptProcess -Process $process)
+                    }
+                }
+                $decoderRestartAttempted=$true; $lastDecoderRestart=$now
+                Write-WatchdogEvent 'DecoderRecoveryAttempt' @{Fact='No fresh valid decoder sample';Action='Targeted decoder restart via manager';Inference='Endpoint or decoder failure; not evidence of TCP control failure'}
+            }
             $mismatches = @()
             if ($fresh) {
                 foreach ($key in @('Source','Mode','Volume')) {
@@ -125,17 +157,18 @@ try {
                     $nextRecovery = $now + 30
                     if ($actionAttempted) { Write-WatchdogEvent 'RecoveryAttempt' @{Action=$lastRecovery;Level=$level;Fact='Freshness or snapshot mismatch';Mismatches=$mismatches} }
                 }
-            } elseif ($level -gt 0) {
+            } elseif ($level -gt 0 -or $faultSince -gt 0) {
                 $recoveredAt = $now; $level = 0; $faultSince = 0
                 $reconnectAttempted = $false; $restartAttempted = $false
                 Write-WatchdogEvent 'RecoveryVerified' @{Fact='Fresh critical observations and canonical agreement';LastAction=$lastRecovery}
             }
-            $reset = Get-AvrResetEligible -Failures $failures -FailureSeconds ($now-$failureStart) -IdentityVerified $identity -CollectorFresh $fresh -ReconnectAttempted $reconnectAttempted -RestartAttempted $restartAttempted -BaselineVerified $baseline
+            $reset = Get-AvrResetEligible -Failures $failures -FailureSeconds ($now-$failureStart) -IdentityVerified $identity -CollectorFresh $fresh -ReconnectAttempted $reconnectAttempted -RestartAttempted $restartAttempted -BaselineVerified $baseline -PowerBeforeFailure $lastVerifiedPower
             # Retain warning only until next fresh probe; clear immediately on success.
             if ($reset) { $script:warningUntil = $now + 20 }
             if ($verification -and $verification.Valid) { $script:warningUntil = 0 }
             $reset = $script:warningUntil -gt $now
             $trusted = $fresh -and $mismatches.Count -eq 0 -and $lastVerify -gt 0 -and $now-$lastVerify -lt 120 -and -not $reset
+            $channelsFresh = $fresh -and $observation.Observed.Channels -and $now-[double]$observation.Observed.Channels -lt 15
             $class = if ($reset) {'AvrControlUnresponsive'} elseif ($standbyKnown) {'Standby'} elseif (-not $fresh) {'CollectorUnverified'} elseif ($mismatches.Count) {'StateMismatch'} elseif (-not $trusted) {'IndependentVerificationUnavailable'} else {'Healthy'}
             $ack = Read-AvrFields (Join-Path $Root 'avr_presentation_ack.txt')
             $presentation = 'Unobservable'
@@ -157,15 +190,22 @@ try {
                 Epoch=$now;Session=$session;PID=$PID;Overall=$class;Trusted=$trusted;ResetAvr=$reset
                 LastIndependentVerification=$lastVerify;LastComprehensiveReconciliation=$lastComprehensive
                 BaselineVerified=$baseline
+                LastVerifiedPower=$lastVerifiedPower
+                DeviceFingerprint=$deviceFingerprint
                 CollectorFresh=$fresh;Collector=$observation;StateEngine=$(if($mismatches.Count){'Mismatch'}else{'NoObservedMismatch'})
                 Presentation=$presentation;Mismatches=$mismatches;Verification=$verification
+                DecoderFresh=$decoderFresh;DecoderLastSample=[string]$decoder['Updated'];DecoderRestartAttempted=$decoderRestartAttempted
+                ChannelsFresh=[bool]$channelsFresh;OptionalHealth=$(if($decoderFresh){'DecoderFresh'}else{'DecoderStaleOrInvalid'})
                 Failures=$failures;Escalation=$level;LastAction=$lastRecovery;LastSuccessfulRecovery=$recoveredAt
                 IdentityVerifiedThisCycle=$identity
+                NetworkEvidence=$networkEvidence
+                ControlService=$(if($verification.Valid){'FreshReplies'}elseif($verification.TcpConnected){'TcpAcceptedButRepliesInvalidOrMissing'}else{'FreshTcpFailed'})
+                FailureDomainInference=$(if($verification.Valid -and -not $fresh){'CollectorOrExistingSession'}elseif($identity){'IdentifiedAvrRespondsOnSeparateService'}elseif($networkEvidence -and -not $networkEvidence.LocalInterfaceUp){'LocalNetworkingUnavailable'}elseif($networkEvidence -and $networkEvidence.AvrIcmp){'AddressRespondsButControlUnverified'}elseif($networkEvidence -and $networkEvidence.GatewayIcmp){'LANPeerRespondsAvrAddressUnverified'}elseif($networkEvidence){'LANOrAvrFailureAmbiguous'}else{'NoControlFailureObserved'})
                 ResetReason=$(if($reset){'Inference: repeated missing fresh TCP replies despite fresh exact-model HEOS identity; reconnect and collector restart failed'}else{''})
                 Limitation='Fresh network replies verify reported AVR state, not physical front-panel correctness; no independent physical sensor.'
             }
             Write-AvrJson $statusPath $health
-            $display = "Epoch=$now`nSession=$session`nTrusted=$([int]$trusted)`nResetAvr=$([int]$reset)`n"
+            $display = "Epoch=$now`nSession=$session`nTrusted=$([int]$trusted)`nResetAvr=$([int]$reset)`nChannelsFresh=$([int][bool]$channelsFresh)`n"
             Write-AvrText $displayPath $display
             if ($class -ne $lastClass -or $now-$lastLog -ge 300) { Write-WatchdogEvent 'Health' $health; $lastClass=$class; $lastLog=$now }
         } catch { Write-WatchdogEvent 'WatchdogCycleError' @{Fact=$_.Exception.Message} }

@@ -52,6 +52,11 @@ within a fault episode, with a 10-minute restart cooldown across episodes.
 The collector also has its own freshness reconnect. An independent snapshot
 mismatch persists until subsequent verification resolves it.
 
+Decoder success age is checked separately from its heartbeat. A stale/invalid
+decoder sample permits one targeted decoder restart per outage after a 30-second
+grace, with a 10-minute cooldown across outages. Continued HTTPS failure is logged
+and reported, never used alone to blame the AVR TCP control service.
+
 Rainmeter acknowledges health session, source/mode/volume measures and its Lua
 update time. A missing/stalled acknowledgment or mismatched consumed values
 permits a targeted measure/meter update, then a targeted AF2 refresh after a
@@ -68,8 +73,13 @@ RESET AVR requires all of:
 - Reconciliation, reconnect and a collector restart have been attempted without recovery.
 - A previous successful independent verification exists. Its historical baseline
   survives watchdog restart, but never makes historical values trusted current state.
+- Last independently verified power was ON; previously verified standby or unknown
+  power prevents ambiguous power-save outages from recommending reset.
 - A fresh response from the separate HEOS device-description service identifies
-  the exact Denon AVR-X3700H model at the configured address.
+  the exact Denon AVR-X3700H model and matches a previously observed device-UDN
+  fingerprint at the configured address. The fingerprint is pinned only while
+  critical control verification succeeds; an unknown/replaced device cannot
+  enable the warning. One bounded identity request initializes this baseline.
 
 ICMP success, open TCP ports, a missing collector, wrong address, local/LAN outage,
 and a single timeout are insufficient. If HEOS identity is unavailable, the cause
@@ -77,9 +87,16 @@ remains ambiguous and no reset recommendation appears. Fresh standby replies
 suppress reset and recovery escalation. Startup with no historical successful
 verification also remains conservative. A new successful critical query removes
 the warning automatically. Identity supports an AVR control-service inference;
-it does not prove hardware failure. A matching replacement AVR is not distinguished
-by physical front-panel sensing. Fresh network replies could themselves describe
+it does not prove hardware failure. Fresh network replies could themselves describe
 obsolete internal AVR state; no available sensor can conclusively detect that case.
+
+Failed checks record local interface status and bounded (300 ms) AVR/gateway ICMP
+observations, alongside fresh TCP connection and exact-model HEOS results.
+Inference distinguishes absent local interfaces, a responding LAN peer with an
+unverified AVR address, a responding address with unverified control, and an
+identified AVR on a separate service. Unanswered ICMP cannot distinguish a LAN
+failure from filtering or an AVR/address problem; that remains explicitly ambiguous.
+These probes never establish correctness and never enable RESET AVR by themselves.
 
 ## Presentation
 
@@ -121,6 +138,8 @@ Report includes overall trust, critical field times/values, connectivity/query
 validity, independent/comprehensive verification times, canonical mismatches,
 presentation acknowledgment, escalation/actions, last successful recovery and
 warning inference. Never equate a stale report with a current healthy watchdog.
+`Overall=Healthy` means critical AVR control and canonical values agree;
+`OptionalHealth` and `DecoderFresh` separately describe decoder availability.
 
 ## Automated validation
 
@@ -166,3 +185,46 @@ deployment list, restores prior files/removes newly added code files, then
 restarts the prior manager and refreshes AF2. Retained diagnostic state is inert
 under the prior skin/manager and preserves incident evidence. No recursive
 deletion, settings changes or blanket collector shutdown is used.
+
+## Production validation on 2026-10-11
+
+Deployment backups:
+
+- `C:\RainmeterDenon\Backups\AvrWatchdog-20261011-154026` restores the original production state.
+- `C:\RainmeterDenon\Backups\AvrWatchdog-20261011-154343` restores the first watchdog deployment.
+
+All existing-file backup hashes were verified. The first startup comprehensive
+check took 1,223 ms; a subsequent critical verification took 262 ms. Both independently
+reported HTPC, DOLBY SURROUND, power ON and relative volume -19.5 dB (absolute 60.5).
+The Rainmeter Lua acknowledgment matched the watchdog session and consumed values.
+Critical trust, channel freshness and presentation progression were healthy;
+RESET AVR remained false. This validates software consumption, not physical pixels.
+
+`Test-AvrRuntime.ps1 -InjectCollectorFailure` terminated only the exact production
+Denon collector, verified its automatic single replacement and fresh recovery,
+and confirmed unchanged metadata/Box1/router/hotkey PIDs. Exactly one manager,
+watchdog, Denon, decoder, Box1, router and hotkey listener remained. The collector,
+prolonged-failure, listening-mode/channel and manager lifecycle automated suites
+passed. Fixture mutexes differ from production so tests can run while deployed.
+
+The pre-existing decoder HTTPS endpoint continues to time out after one targeted
+restart. Its last successful sample was old. Decoder/optional fields that cannot
+be freshly acquired remain unavailable; no known-old format is shown as current.
+That service outage does not invalidate working TCP input/volume/listening-mode
+observations and does not alone satisfy RESET AVR criteria. No AVR settings or
+power were changed, and no physical Lyr+ test was needed. The physical incident's
+root cause and front-panel consistency under an internal AVR cache failure remain
+unproven; diagnostics retain that distinction.
+
+Live regression/identity command (read-only by default; explicit switch injects
+the targeted collector termination already described):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OLED-Telemetry-Project\diagnostics\Test-AvrRuntime.ps1
+```
+
+Exact rollback to the original production installation:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OLED-Telemetry-Project\diagnostics\Deploy-AvrWatchdog.ps1 -Action Rollback -BackupPath C:\RainmeterDenon\Backups\AvrWatchdog-20261011-154026
+```

@@ -62,6 +62,11 @@ or Rainmeter refresh failure could leave only part of the display stuck.
 Do not begin by rewriting the application. First document and reproduce
 the current behavior.
 
+The deployed AVR health watchdog now independently verifies critical Denon
+state and performs bounded recovery. Its evidence limits, diagnostics,
+RESET AVR criteria and verified rollback procedure are documented in
+[`docs/AVR-HEALTH-WATCHDOG.md`](docs/AVR-HEALTH-WATCHDOG.md).
+
 ## Private historical material
 
 Relevant ChatGPT conversation archives are available locally under:
