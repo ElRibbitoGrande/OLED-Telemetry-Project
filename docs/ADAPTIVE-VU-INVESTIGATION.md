@@ -76,18 +76,119 @@ Consequently no attack/decay or adaptive-gain retuning was selected from this
 evidence. Shortening attack would risk compensating for an upstream offset
 while changing the musical envelope. The next useful inspection is the actual
 firmware 0.18 RMS/peak integration window, sample/DMA buffering and USB report
-path. Only UF2 artifacts have been located so far; build source is needed to
-make a narrowly scoped, reproducible firmware change. No firmware was flashed,
+path. Build source was subsequently located on Lab and verified against the
+archived 0.18 image as described below. No firmware was flashed,
 production code changed, or second physical recording session requested in
 this analysis. Perceptual equivalence and task completion remain unproven.
+
+### Lab 0.18 audit incorporated; next measurement
+
+Read-only `ssh lab` inspection located `/home/tim/Documents/box1` and its Lab
+Codex audit at `investigation/0.18/REPORT.md`. The user-supplied Lab transcript
+agrees with that report. The current four build inputs match revision
+`93cbc76cda6c681d010f1584c73d1e09eec69342` and the archived release sources.
+The release and `build-clean-0.18` UF2 hashes both equal the preserved Windows
+0.18 artifact:
+
+`1985ec0ba5b7b7be8e39624e688c28ea1e907b8c35d6349c8cffff17c5d790c1`.
+
+The Lab audit additionally verifies the independent build differs only in its
+date string, with identical executable/load sections. Its exhaustive 480-phase
+onset and pulse tests exercise the archived C functions; strict warnings,
+ASan/UBSan and the 997 Hz signal test pass. These are reported host/build results,
+not MCU execution or USB timing measurements. This Windows investigation read
+and cross-checked the sources/hashes without rerunning builds or modifying Lab.
+The known image/source relationship is strong; the bytes physically running on
+the Pico have not been independently read back. The Windows production record
+of 0.18 and ~100 Hz operation is consistent with the image but is not a binary
+identity proof. Lab's historical candidate label does not overturn the Windows
+production acceptance record, nor does either record establish a flash hash.
+
+| Verified archived-source stage | Calculated contribution; not hardware timing |
+|---|---|
+| PIO clock | Fractional divisor 6.10546875 at 150 MHz gives Fs 47,984.645 Hz; 480 frames take 10.0032 ms. Crystal/live-clock error is unmeasured. |
+| PCM1808 digital filter | 17.4/Fs gives about 0.363 ms group delay. |
+| Joined RX FIFO / chained DMA | FIFO drains by DREQ; two alternating DMA buffers do not require waiting for two blocks. No obligatory FIFO-fill wait. |
+| RMS and peak | One non-overlapping 480-frame window, no additional RMS envelope, averaging, peak hold or inter-block peak decay. First-response wait 0–10.0032 ms, approximately 5 ms mean phase wait, plus execution. |
+| Window fill | A partial first window dilutes RMS. Ideal constant-energy step reaches 90% in approximately 8.1–18.1 ms depending on onset phase; this is distinct from dead time. |
+| DC rejection | Persistent 0.5 Hz firmware high-pass, plus ADC high-pass. They alter low-frequency phase/settling but are not two music envelopes or fixed tens-of-ms holds. |
+| Firmware VU | Separate 300/900 ms ballistics; not in the Windows needle input. |
+| Publication | Attempt immediately after each completed block; no second 10 ms report timer. MCU copy/meter/log/format/IRQ time remains unmeasured. |
+| CDC FIFO / USB | 1024-byte FIFO plus endpoint may retain about 15 normal historical reports under backpressure. This is capacity, not a measured 150 ms delay. Flush does not guarantee host receipt. Bulk service and host queue age remain unknown. |
+| DMA late path | Both channels can become inactive after a missed rearm deadline; rearm uses trigger=false, so the static path can subsequently process old buffers. This is an unobserved failure mechanism, not an established incident. |
+
+The measured 99.9706 Hz receipt cadence is consistent with the calculated
+99.9680 Hz block rate. It does not prove zero queue age: a steady stream can be
+several reports behind. A 10 ms normal RMS/peak window alone does not explain
+the approximate 40 ms raw-pattern offset. Conversely, the microphone-derived
+40 ms estimate must not be relabeled a measured USB delay. ADC reset/fade-in
+and firmware DC settling are not per-transient latency explanations during
+continuous clocked playback.
+
+An important Windows observability gap was found: firmware `box1.c:422` appends
+`| stall=... late=... drop=...` when a current error occurs. The collector's
+strict end-anchored telemetry regex accepts only the six numeric level fields,
+so it discards those extended reports entirely, including their level values.
+Existing CSVs store accepted parsed values, not every wire line. Thus the prior
+"valid records/no malformed tail" statement describes CSV integrity only;
+it cannot establish no firmware stalls, late DMA or USB drops. No parser fix
+or deployment was made in this read-only integration step. A future capture
+must record complete received lines through the existing single serial owner,
+not open a competing serial reader. The firmware suffix is event-dependent:
+absence cannot establish an all-time-zero late count, and drop resets on a
+successful send.
+
+**Next measurement: one bounded electrical tone-burst / USB / receipt capture
+on the existing firmware, before any overlap or attack change.** Use repeated
+approximately 1 kHz bursts separated by silence, with onset phases varied
+relative to the 10 ms block. Measure the actual electrical signal at the same
+analog point feeding PCM1808; playback-command timestamps or phone sound are
+not substitutes for that input reference. Capture these boundaries together:
+
+1. Electrical onset, and preferably LRCK/DOUT decoded sample onset, on a common
+   instrument timebase. This isolates analog/ADC versus the normal block wait.
+2. Full CDC payloads and USB transfer completion timing, plus immediate
+   collector read-return timestamps, full serial line text and BytesToRead.
+   Correlate ordered payloads; existing firmware has no device sequence or
+   production timestamp. Preserve duplicates and diagnostic suffixes.
+3. Existing HKLM observations, command values/SYNC marker and optical needle
+   frames to retain the already measured downstream path.
+
+USBPcap/URB timestamps would measure host USB transfer boundaries, not the
+physical device enqueue time or USB wire transaction by themselves. A hardware
+USB trace with the electrical trigger is preferable when available. If the
+electrical instrument and host capture use different clocks, align them with
+repeated common events and quantify offset/drift; do not subtract unsynchronized
+timestamps. Keep the asynchronous diagnostic writer, fixed stop deadline and
+unchanged display formulas. A controlled host-read stall is a later, separate
+backpressure experiment, not required for the first normal-operation baseline.
+
+Interpretation: promptly visible I2S onset but late USB payload points toward
+MCU execution/device queue/service; promptly delivered USB payload but late
+ReadLine return points toward Windows buffering/reader; promptly received raw
+levels but late optical needles points toward envelope/render scheduling.
+Error suffixes or discontinuous sample cadence require acquisition-continuity
+investigation before treating the normal block calculation as applicable.
+Payload-only host capture cannot split MCU processing from device USB queue
+age. If that split remains necessary, a separately reviewed diagnostic firmware
+build would add block/sample counters, acquisition-end and enqueue timestamps,
+processing duration, FIFO occupancy and cumulative errors/skips. Do not flash
+or alter firmware merely to establish access or source provenance.
+
+Lab's proposed 120-frame hop with a 480-frame rolling horizon would reduce
+worst normal block wait by only 7.50 ms and mean wait by 3.75 ms. It cannot by
+itself resolve the approximate 40 ms raw-pattern offset. It is a conditional
+later optimization with a fourfold processing/report load, not the next test.
+No improved UF2 exists, no flash is currently warranted, and production VU and
+AVR-watchdog code remain unchanged by this report integration.
 
 ### Measured path and limits
 
 | Stage | Evidence / contribution |
 |---|---|
 | WiiM analog event relative to heard audio | Paired phone recordings now provide a microphone-relative pattern reference as described above. An electrical analog-event timestamp remains unavailable; playback/source clocks are not timing references. |
-| PCM1808 conversion/filter | TI specifies digital-filter delay 17.4/fs; 0.36 ms at 48 kHz, conditional on actual fs. Current fs has not been independently verified. |
-| Pico sampling, raw RMS window and USB batching | Firmware 0.18 emits approximately 100 reports/s. Window length, DMA buffering and sample timestamps remain unknown; only UF2 artifacts were found, not build source. A 10 ms report period does not prove a 10 ms RMS window. |
+| PCM1808 conversion/filter | TI specifies digital-filter delay 17.4/fs; about 0.363 ms at the Lab calculated Fs. Actual hardware Fs remains unmeasured. |
+| Pico sampling, raw RMS window and USB batching | Lab verified archived source: one 480-frame, calculated 10.0032 ms RMS/peak window, alternating DMA buffers, immediate report attempt, 1024-byte TX FIFO. Physical image identity, execution time, queue age and sample timestamps remain unmeasured. |
 | Serial receipt | About 100 Hz. Completed baseline median spacing 9.94 ms, p95 16.65 ms, p99 25.28 ms; post-change 9.96 / 15.74 / 22.58 ms. Acquisition is continuously decoupled from publication. |
 | Collector envelope | One asymmetric power envelope over raw RMS reports, 85/520 coefficient inputs. Firmware `vu` is diagnostic and is not used for needles. No new envelope stage in Rainmeter. |
 | Receipt to first HKLM observation | Sampled baseline median/p95 14.9/24.8 ms; post-change 10.0/17.4 ms. Includes observer waiting, not just publisher processing. |
