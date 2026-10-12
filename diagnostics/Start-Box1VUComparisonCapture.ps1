@@ -50,6 +50,11 @@ try {
     [IO.File]::Move($controlTemp, $ControlFile)
     Signal-CollectorControlChange
 
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f (Join-Path $PSScriptRoot 'Probe-Box1Delivery.ps1')),
+        '-CaptureDirectory',('"{0}"' -f $captureDirectory),'-MaximumSeconds','330')
+    & $RainmeterExe '!EnableMeasure' 'DashboardVUProbeClock' $RainmeterConfig
+
     & $RainmeterExe '!EnableMeasure' $RainmeterMeasure $RainmeterConfig
     & $RainmeterExe '!CommandMeasure' $RainmeterMeasure 'Initialize()' $RainmeterConfig
     & $RainmeterExe '!UpdateMeasure' $RainmeterMeasure $RainmeterConfig
@@ -58,14 +63,18 @@ try {
     $rainmeterStarted = Join-Path $captureDirectory 'rainmeter_capture.started'
     $collectorError = Join-Path $captureDirectory 'box1_collector_capture.error.txt'
     $rainmeterError = Join-Path $captureDirectory 'rainmeter_capture.error.txt'
+    $probeError = Join-Path $captureDirectory 'delivery_probe.error.txt'
+    $probeStarted = Join-Path $captureDirectory 'delivery_probe.started'
     $deadline = [DateTime]::UtcNow.AddSeconds($StartTimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
         if ((Test-Path -LiteralPath $collectorError -PathType Leaf) -or
-            (Test-Path -LiteralPath $rainmeterError -PathType Leaf)) {
+            (Test-Path -LiteralPath $rainmeterError -PathType Leaf) -or
+            (Test-Path -LiteralPath $probeError -PathType Leaf)) {
             break
         }
         if ((Test-Path -LiteralPath $collectorStarted -PathType Leaf) -and
-            (Test-Path -LiteralPath $rainmeterStarted -PathType Leaf)) {
+            (Test-Path -LiteralPath $rainmeterStarted -PathType Leaf) -and
+            (Test-Path -LiteralPath $probeStarted -PathType Leaf)) {
             break
         }
         Start-Sleep -Milliseconds 100
@@ -74,6 +83,8 @@ try {
     if (Test-Path -LiteralPath $collectorError -PathType Leaf) {
         throw "The Box1Collector diagnostic writer failed: $(Get-Content -Raw -LiteralPath $collectorError)"
     }
+    if (Test-Path -LiteralPath $probeError -PathType Leaf) { throw (Get-Content -Raw -LiteralPath $probeError) }
+    if (-not (Test-Path -LiteralPath $probeStarted -PathType Leaf)) { throw 'Timing probe did not acknowledge capture' }
     if (Test-Path -LiteralPath $rainmeterError -PathType Leaf) {
         throw "The Rainmeter diagnostic measure failed: $(Get-Content -Raw -LiteralPath $rainmeterError)"
     }
@@ -89,10 +100,11 @@ catch {
     Remove-Item -LiteralPath $controlTemp -Force -ErrorAction SilentlyContinue
     try { Signal-CollectorControlChange } catch {}
     try { & $RainmeterExe '!DisableMeasure' $RainmeterMeasure $RainmeterConfig } catch {}
+    try { & $RainmeterExe '!DisableMeasure' 'DashboardVUProbeClock' $RainmeterConfig } catch {}
     throw
 }
 
 Write-Host 'Box 1 VU comparison capture started.'
 Write-Host "Capture folder: $captureDirectory"
-Write-Host 'Play the same track through Windows and WiiM for 60-90 seconds.'
+Write-Host 'Capture is bounded by its caller; playback is not changed by this tool.'
 Write-Host "Stop with: powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\Stop-Box1VUComparisonCapture.ps1`""

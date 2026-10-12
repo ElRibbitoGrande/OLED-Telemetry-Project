@@ -1,4 +1,176 @@
-# Adaptive meter sensitivity — investigation in progress
+# Adaptive meter sensitivity and Lyr+/Box1 timing — investigation in progress
+
+## 2026-10-11: delivery improvements deployed; perceptual comparison pending
+
+The new responsiveness task supersedes the former Lyr+ display-blackout
+constraint. The user can retain the PC/HDMI display, interact with Codex, and
+record the OLED while listening to Lyr+. Historical timed/blind capture accounts
+below describe the former arrangement. Do not repeat that workflow.
+
+The September trial files in the working tree matched the deployed skin.
+Their 1.6 Box1 calibration, unity AudioLevel acquisition, stereo-linked adaptive
+attenuation and 85/520 ms coefficients are preserved. No adaptive target, gain
+limit, attack/decay constant, source gate, firmware or watchdog logic was changed
+in this delivery trial. Completion still requires a controlled audible/visual
+comparison; quieter software delivery is not proof of perceptual acceptance.
+
+### Measured path and limits
+
+| Stage | Evidence / contribution |
+|---|---|
+| WiiM analog event relative to heard audio | Not synchronized by available captures; playback/source clocks are not timing references. |
+| PCM1808 conversion/filter | TI specifies digital-filter delay 17.4/fs; 0.36 ms at 48 kHz, conditional on actual fs. Current fs has not been independently verified. |
+| Pico sampling, raw RMS window and USB batching | Firmware 0.18 emits approximately 100 reports/s. Window length, DMA buffering and sample timestamps remain unknown; only UF2 artifacts were found, not build source. A 10 ms report period does not prove a 10 ms RMS window. |
+| Serial receipt | About 100 Hz. Completed baseline median spacing 9.94 ms, p95 16.65 ms, p99 25.28 ms; post-change 9.96 / 15.74 / 22.58 ms. Acquisition is continuously decoupled from publication. |
+| Collector envelope | One asymmetric power envelope over raw RMS reports, 85/520 coefficient inputs. Firmware `vu` is diagnostic and is not used for needles. No new envelope stage in Rainmeter. |
+| Receipt to first HKLM observation | Sampled baseline median/p95 14.9/24.8 ms; post-change 10.0/17.4 ms. Includes observer waiting, not just publisher processing. |
+| Receipt to command-frame clock estimate | Sampled baseline median/p95 13.2/22.5 ms; post-change 7.4/14.5 ms. This is latest-data age, not physical onset or scanout. |
+| Source mapping/calibration and linked gain | Scalar multiplication, one slow linked gain, final clamp. Gain interpolation affects gain only; the accepted normal-material example held gain at one. |
+| Rainmeter command cadence | Nominal 32 ms, observed median approximately 46.5–46.7 ms on this desktop. Both sources share rendering cadence. No frame-rate change was made. |
+| Render/panel/camera/acoustic delay | Not independently measured; must not be omitted from claimed end-to-end latency. |
+
+These numbers are not additive end-to-end measurements. The diagnostic clock
+is sampled every requested 5 ms, actually about 15.6 ms on this host, with
+observed gaps up to 47–62 ms. Its frame timestamps therefore have bounded
+sampling uncertainty, plus millisecond receipt truncation. Initial stale probe
+clock values are excluded. Before/after statistics support reduced software
+delivery overhead; their apparent 5–8 ms difference is not a precise measured
+physical latency improvement. Captures contained silent Box1 input, so these
+new recordings establish delivery/idle stability rather than musical acceptance.
+
+References: [TI PCM1808 datasheet](https://www.ti.com/lit/gpn/pcm1808),
+[installed-version AudioLevel source](https://github.com/rainmeter/rainmeter/blob/v4.5.26.3894/Plugins/PluginAudioLevel/PluginAudioLevel.cpp).
+The firmware artifact SHA256 still matches the August known-good 0.18 artifact;
+no flashing or physical AVR/audio-control changes were performed.
+
+### Avoidable overhead and stability changes
+
+The same publisher worker previously wrote live HKLM values and a diagnostic
+status file on every approximately 100 Hz update. Rainmeter no longer reads that
+file. Its only active code consumer found in this audit is collector startup
+sequence recovery. Diagnostic snapshots now write at most 5 Hz while HKLM remains
+signaled at acquisition rate and coalesces only intermediate publication samples.
+Startup chooses max(registry sequence, diagnostic-file sequence), preserving
+monotonicity despite the slower file. No fixed sleep or pacing was introduced in
+serial acquisition or the envelope.
+
+The manager log recorded temporary missing heartbeat paths followed by Box1
+restarts, including during an initial capture. Heartbeat publication now opens
+the existing file in place and closes it after writing instead of replacing its
+directory entry. Its mtime remains liveness evidence only. This removes a
+plausible transient-absence trigger without relaxing supervision or changing
+TelemetryManager/watchdog code. The interrupted capture is labeled incomplete;
+its malformed final row is excluded, never silently treated as a complete run.
+
+`Test-Box1DeliveryPublisher.ps1` executes the real publisher in an isolated HKCU
+fixture with synthetic data. A diagnostic file held without delete-sharing did
+not stop live registry updates; the heartbeat progressed and final sequence
+committed. It observed 21 diagnostic snapshots over 400 input updates. Values
+and stereo ratio remained intact. Native HKLM transport and its scoped ACL in
+production remain unchanged. The completed post-deployment capture held about
+100 Hz and had all capture completion markers, without a collector restart.
+
+### Ballistics versus windowing
+
+The existing constant-power equivalence tests pass, but cannot establish
+equivalence to real PCM audio. AudioLevel applies attack/decay per sample of
+squared audio, including waveform zero crossings. Box1 applies that operation
+to an already-averaged RMS power value. Averaging and asymmetric filtering do
+not commute. `Model-VUEnvelope.py` makes this distinction explicit: for its
+illustrative 1 kHz amplitude step, own-steady-level-normalized 90% rise was about
+158 ms for audio-sample filtering and 90 ms for 10 ms RMS blocks. Other unknown
+window lengths shift onset and shape. These are simulations, not measured Box1
+firmware behavior. They do not justify blindly reducing attack; the current
+user observation of slower Lyr+ attack remains valid acceptance evidence.
+
+Replaying the accepted Black Cow raw capture with receipt-timed versus nominal
+10 ms steps changed median travel 0.363 to 0.368 and p95 0.560 to 0.562, with
+no pinning. That is small and does not establish receipt jitter as the residual
+audible-delay cause. Consequently neither time-base nor ballistics was retuned.
+No second fast envelope, peak hold or moving average was found downstream in
+the deployed needle path. The firmware's raw RMS window is an unresolved upstream
+integration stage, distinct from its unused `vu` envelope.
+In the accepted Black Cow raw capture, peak/RMS dB alignment was strongest at
+zero report lag (correlation 0.988). This supplies no evidence of a separate
+RMS lag relative to peak; both fields can still share an unknown upstream window.
+
+### Validation and regression scope
+
+PowerShell parsing and the existing constant-power step/pulse/gain tests passed.
+Rainmeter's actual Lua runtime passed adaptive tests for isolated peaks,
+stereo linkage, silence/pause hold, no wind-up, source/track resets and bounded
+gain interpolation. Five recorded normal/hot replays passed: normal replays
+retained unity adaptive gain; settled hot pinning remained 0.138% HTPC and
+0.435% calibrated Box1. Sparse/quiet behavior is covered by synthetic levels
+and existing dynamic passages, not by an invented new quiet recording.
+The watchdog reports healthy critical state and updating presentation with no
+RESET AVR. Its code, mode authority, artwork controller, hotkeys and pixel-shift
+code are outside this change. A historical watchdog restart occurred before
+the collector deployment; it is not claimed to have been solved by this VU work.
+
+### Instrumentation, callers and failure isolation
+
+- `Box1Collector.ps1` is called by TelemetryManager; reads serial, previous
+  diagnostic sequence and HKLM sequence; writes live HKLM, 5 Hz `box1_status.txt`,
+  2-second heartbeat, errors and optional capture logs. Connection/validation/
+  reconnection/shutdown deadlines retain 750 ms / 6 s / 2 s / 5 s behavior.
+- `Capture-VUProgram.ps1` calls Start/Stop capture scripts and stops automatically
+  in finally. Start launches bounded `Probe-Box1Delivery.ps1`, enables the optional
+  registry clock measure and Lua capture, with an 8-second startup/error deadline.
+  Stop removes the control file, hides/disables capture and clock, and checks
+  existing 12-second completion deadlines. A probe error does not restart collectors.
+- The C# probe writes only a diagnostic clock value in the existing writable
+  runtime key and CSV/markers under ignored captures. It opens exactly ReadKey /
+  SetValue access, never broadens ACLs, and stops on control removal or 330 seconds.
+  It never opens the serial port. Its record timestamps are sampled observations.
+- Lua appends clock/receipt columns, buffers bounded capture rows, and temporarily
+  shows a small SYNC footer in AF2 for video-to-log alignment. The footer is hidden
+  outside capture. Disabled diagnostics add no ongoing clock writes or logging.
+- Publisher-file failures cannot block acquisition or unrelated telemetry.
+  Only Box1 was restarted for deployment; no AVR, Windows, metadata or watchdog
+  restart is part of VU deployment.
+
+### Deployment and exact rollback
+
+The VU-only deployment tool verifies backups/hashes before copying explicit VU
+files, the AF2 layout footer, and optionally Box1Collector. It refreshes only AF2.
+Collector replacement is supervised by the existing manager. Firmware and
+watchdog files are never in this deployment list.
+
+The original pre-change collector and improved September VU behavior are preserved
+in `diagnostics/captures/VU-latency-backup-20261011-164138`. The earlier instrumentation
+backup at `VU-latency-backup-20261011-162030` preserves the pre-clock VU include/Lua
+files. The final sync-footer deployment is backed up in
+`VU-latency-backup-20261011-165953`, including the prior AF2 layout. All backup
+hashes were verified. Git commit `a122e6c` preserves the pre-change deployed
+adaptive trial on top of watchdog baseline `4ee175e`.
+To undo delivery changes while retaining the AVR watchdog:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OLED-Telemetry-Project\diagnostics\Deploy-VULatency.ps1 -Action Rollback -BackupPath C:\OLED-Telemetry-Project\diagnostics\captures\VU-latency-backup-20261011-164138
+```
+
+To additionally remove timing diagnostics, restore the earlier instrumentation
+backup with the same command. Restore the `165953` manifest first if the inert,
+normally hidden sync-footer definition must also be removed. Each manifest is validated against hashes and the
+explicit allowed target list. Existing adaptive/calibration behavior is retained.
+Generated logs, clock state and cached artwork are not committed.
+The final short capture completed both acquisition and Rainmeter logs. Native
+inspection confirmed the foreground sync meter and updated timestamp text;
+capture/clock measures were disabled afterward. Read-only production runtime
+validation confirmed one copy of every supervised component, healthy independent
+AVR verification, current Rainmeter consumption and no reset warning.
+
+### Remaining physical comparison
+
+Instrumented command times cannot show when the analog event reached the ADC,
+the actual rendered scanout, or the user's acoustic reference. A single paired
+recording session is therefore required before final completion: same 30-second
+Black Cow passage on HTPC and Lyr+, preferably 60 fps from the same camera position,
+showing both needles, source and SYNC footer with music audible. No HDMI input
+change, blind wait or manually estimated milliseconds is required. Timing analysis
+will distinguish delayed onset from slow approach after onset before choosing
+an attack/firmware change. No perceptual equivalence has yet been claimed.
 
 The additional September 8 request authorizes slow, stereo-linked adaptive
 meter gain for HTPC and Lyr+/Box1. It does not authorize replacing the pleasing
@@ -6,7 +178,7 @@ HTPC motion with a different response. Base gain remains 2.7 and attack /
 decay remain 85 / 520 ms. A first attenuation-only trial is now deployed;
 user-visible validation and quiet-recording gain increases remain outstanding.
 
-## Current trial (23:16 September 8)
+## September 8 trial (historical, 23:16)
 
 The later paired Corea capture aligned at correlation 0.968 with a fitted
 Box1-to-Windows multiplier of 1.66. Aja suggested 1.605. A provisional 1.6

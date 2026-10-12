@@ -73,6 +73,7 @@ local function completeCapture()
         return
     end
     stopped = true
+    SKIN:Bang('!HideMeter','DashboardVUVideoSync')
 
     local outputPath = captureDirectory .. '\\rainmeter_comparison.csv'
     local tempPath = outputPath .. '.tmp'
@@ -115,17 +116,20 @@ function Initialize()
     measures.displayLeft = SKIN:GetMeasure('DashboardVUDisplayLeft')
     measures.displayRight = SKIN:GetMeasure('DashboardVUDisplayRight')
     measures.adaptiveGain = SKIN:GetMeasure('DashboardVUAdaptiveGain')
+    measures.probeClock = SKIN:GetMeasure('DashboardVUProbeClock')
+    measures.receiptStamp = SKIN:GetMeasure('DashboardRawBox1Updated')
     updateMs = math.max(1, tonumber(SELF:GetOption('UpdateMs', '32')) or 32)
 
     local control = readControl(SELF:GetOption('ControlFile', ''))
     if control == nil then
+        SKIN:Bang('!HideMeter','DashboardVUVideoSync')
         return
     end
 
     captureId = control.CaptureId
     captureDirectory = control.CaptureDirectory
     rows = {
-        'EpochSecond,RainmeterFrame,NominalElapsedMs,Source,WindowsRawLeft,WindowsRawRight,Box1LeftRmsDb,Box1RightRmsDb,Box1PreLeft,Box1PreRight,Box1FinalLeft,Box1FinalRight,Box1Sequence,WindowsEnvelopeLeft,WindowsEnvelopeRight,Box1EnvelopeLeft,Box1EnvelopeRight,DisplayLeft,DisplayRight,AdaptiveGain,Box1CalibrationGain'
+        'EpochSecond,RainmeterFrame,NominalElapsedMs,Source,WindowsRawLeft,WindowsRawRight,Box1LeftRmsDb,Box1RightRmsDb,Box1PreLeft,Box1PreRight,Box1FinalLeft,Box1FinalRight,Box1Sequence,WindowsEnvelopeLeft,WindowsEnvelopeRight,Box1EnvelopeLeft,Box1EnvelopeRight,DisplayLeft,DisplayRight,AdaptiveGain,Box1CalibrationGain,ProbeUtcMs,ReceiptLocal'
     }
     frame = 0
     stopped = false
@@ -142,6 +146,12 @@ function Update()
     end
     if not active then
         return 0
+    end
+    local stamp = getNumber(measures.probeClock)
+    if math.abs(stamp / 1000 - os.time()) < 2 then
+        SKIN:Bang('!SetOption','DashboardVUVideoSync','Text',string.format('SYNC %.3f',stamp / 1000))
+        SKIN:Bang('!ShowMeter','DashboardVUVideoSync')
+        SKIN:Bang('!UpdateMeter','DashboardVUVideoSync')
     end
 
     local fields = {
@@ -165,7 +175,9 @@ function Update()
         string.format('%.17g', getNumber(measures.displayLeft)),
         string.format('%.17g', getNumber(measures.displayRight)),
         string.format('%.17g', getNumber(measures.adaptiveGain)),
-        tostring(SKIN:GetVariable('DashboardBox1CalibrationGain','1'))
+        tostring(SKIN:GetVariable('DashboardBox1CalibrationGain','1')),
+        string.format('%.3f',getNumber(measures.probeClock)),
+        csv(getString(measures.receiptStamp))
     }
     rows[#rows + 1] = table.concat(fields, ',')
     frame = frame + 1

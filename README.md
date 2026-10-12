@@ -67,6 +67,10 @@ state and performs bounded recovery. Its evidence limits, diagnostics,
 RESET AVR criteria and verified rollback procedure are documented in
 [`docs/AVR-HEALTH-WATCHDOG.md`](docs/AVR-HEALTH-WATCHDOG.md).
 
+Current Lyr+/Box1 delivery measurements, the preserved adaptive VU trial,
+VU-only rollback and pending perceptual comparison are recorded in
+[`docs/ADAPTIVE-VU-INVESTIGATION.md`](docs/ADAPTIVE-VU-INVESTIGATION.md).
+
 ## Private historical material
 
 Relevant ChatGPT conversation archives are available locally under:

@@ -73,18 +73,27 @@ function Clear-CollectorError {
 }
 
 function Get-InitialSequence {
-    if (-not (Test-Path -LiteralPath $StateFile -PathType Leaf)) { return 0L }
+    $initial = 0L
+    # The diagnostic file is deliberately slower than live registry publication.
+    # Preserve monotonic sequencing across restarts from either persisted copy.
+    try {
+        $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryView]::Registry64)
+        $key = $baseKey.OpenSubKey($RuntimeRegistrySubKey)
+        try { if($key){$value=0L;if([long]::TryParse([string]$key.GetValue('Sequence'),[ref]$value)){$initial=[Math]::Max($initial,$value)}} }
+        finally {if($key){$key.Dispose()};$baseKey.Dispose()}
+    } catch {}
+    if (-not (Test-Path -LiteralPath $StateFile -PathType Leaf)) { return $initial }
 
     try {
         foreach ($line in Get-Content -LiteralPath $StateFile -ErrorAction Stop) {
             if ($line -match '^Sequence=(\d+)$') {
-                return [long]::Parse($Matches[1], $InvariantCulture)
+                return [Math]::Max($initial,[long]::Parse($Matches[1], $InvariantCulture))
             }
         }
     }
     catch {}
 
-    return 0L
+    return $initial
 }
 
 function Get-CandidatePortNames {
@@ -270,6 +279,7 @@ $PublisherScript = {
     $publisherCulture = [Globalization.CultureInfo]::InvariantCulture
     $lastPublishedSequence = -1L
     $lastRegistrySequence = -1L
+    $nextStatePublication = [DateTime]::MinValue
     $statePublicationFailed = $false
     $registryPublicationFailed = $false
     $nextHeartbeat = [DateTime]::UtcNow
@@ -458,10 +468,13 @@ namespace Box1Collector
         $now = [DateTime]::UtcNow
         if ($now -ge $nextHeartbeat) {
             try {
-                Write-PublisherAtomicText `
-                    -Path $PublisherHeartbeatFile `
-                    -TempPath $PublisherHeartbeatTempFile `
-                    -Content (Get-Date -Format 'o')
+                # Supervision reads mtime, not this text as correctness evidence.
+                # Keep the path present: ReplaceFileW can expose a brief missing
+                # entry to metadata readers and provoke a false collector restart.
+                $bytes = [Text.Encoding]::UTF8.GetBytes((Get-Date -Format 'o'))
+                $heartbeat = [IO.File]::Open($PublisherHeartbeatFile,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
+                try {$heartbeat.Write($bytes,0,$bytes.Length);$heartbeat.SetLength($bytes.Length)}
+                finally {$heartbeat.Dispose()}
             }
             catch {
                 Write-PublisherError -Message "Box 1 heartbeat publication failed. $($_.Exception.Message)"
@@ -497,7 +510,10 @@ namespace Box1Collector
                 }
             }
 
-            if ([long]$sample.Sequence -gt $lastPublishedSequence) {
+            if ([long]$sample.Sequence -gt $lastPublishedSequence -and $now -ge $nextStatePublication) {
+                # Rainmeter uses HKLM synchronously. This compatibility/diagnostic
+                # file has no frame-rate reader and must not monopolize delivery.
+                $nextStatePublication = $now.AddMilliseconds(200)
                 try {
                 $lines = @(
                     'Device=BOX1'
@@ -540,7 +556,9 @@ namespace Box1Collector
 
             # Recheck immediately. Samples received during publication are coalesced
             # into the newest available sample without delaying serial acquisition.
-            continue
+            # Registry remains signaled at acquisition rate. A pending diagnostic
+            # snapshot alone is not a reason to busy-spin between 5 Hz writes.
+            if ([long]$SharedState.LatestSample.Sequence -gt $lastRegistrySequence) { continue }
         }
 
         $millisecondsUntilHeartbeat = [Math]::Ceiling(

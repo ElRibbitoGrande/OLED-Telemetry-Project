@@ -40,6 +40,7 @@ if (-not $captureDirectory.StartsWith($captureRoot, [StringComparison]::OrdinalI
 }
 
 Remove-Item -LiteralPath $ControlFile -Force
+& $RainmeterExe '!DisableMeasure' 'DashboardVUProbeClock' $RainmeterConfig
 Signal-CollectorControlChange
 if (Test-Path -LiteralPath $RainmeterExe -PathType Leaf) {
     & $RainmeterExe '!CommandMeasure' $RainmeterMeasure 'StopCapture()' $RainmeterConfig

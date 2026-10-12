@@ -42,6 +42,13 @@ DynamicVariables=1
 
 ; Disabled diagnostic sampler. Start-Box1VUComparisonCapture.ps1 enables it
 ; temporarily without changing any production response or meter formula.
+[DashboardVUProbeClock]
+Measure=Registry
+RegHKey=HKEY_LOCAL_MACHINE
+RegKey=Software\OLED-Telemetry-Project\Box1Runtime
+RegValue=DiagnosticClockUtcMs
+Disabled=1
+
 [DashboardVUComparisonCapture]
 Measure=Script
 ScriptFile=#@#VU\Box1VUComparisonCapture.lua

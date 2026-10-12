@@ -3,8 +3,9 @@ param()
 
 # Reference: Rainmeter 4.5.26 PluginAudioLevel.cpp. The reference path applies
 # its asymmetric power envelope per audio sample. The legacy Lua implementation
-# remains the 32 ms mathematical reference; the collector now applies that same
-# time-domain response to every approximately 10 ms Box 1 RMS report.
+# remains the 32 ms constant-power mathematical reference. Equivalence below
+# applies to constant RMS blocks, not to actual audio waveforms: HTPC selects
+# attack/decay per audio sample while Box1 receives already-windowed RMS reports.
 $ErrorActionPreference = 'Stop'
 
 $SampleRate = 48000
@@ -216,7 +217,8 @@ if ($dashboardState -notmatch 'Formula=Clamp\(10 \*\* \(DashboardRawBox1LeftRmsD
 }
 if ($signalAcquisition -notmatch 'RMSAttack=#DashboardVUAttack#' -or
     $signalAcquisition -notmatch 'RMSDecay=#DashboardVUDecay#' -or
-    $signalAcquisition -notmatch 'RMSGain=#DashboardVUGain#') {
+    $signalAcquisition -notmatch 'RMSGain=1' -or
+    $signalAcquisition -notmatch 'DashboardVUEnvelopeLeft \* #DashboardVUGain#') {
     throw 'The Windows AudioLevel response configuration has changed unexpectedly.'
 }
 if ($responseVariables -notmatch 'DashboardVUGain=2\.7' -or
