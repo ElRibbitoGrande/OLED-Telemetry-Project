@@ -1,6 +1,6 @@
 # Adaptive meter sensitivity and Lyr+/Box1 timing — investigation in progress
 
-## 2026-10-11: delivery improvements deployed; perceptual comparison pending
+## 2026-10-11: paired recordings show residual latency; acceptance pending
 
 The new responsiveness task supersedes the former Lyr+ display-blackout
 constraint. The user can retain the PC/HDMI display, interact with Codex, and
@@ -14,11 +14,78 @@ limit, attack/decay constant, source gate, firmware or watchdog logic was change
 in this delivery trial. Completion still requires a controlled audible/visual
 comparison; quieter software delivery is not proof of perceptual acceptance.
 
+### Paired Black Cow recordings: measured residual offset
+
+The user supplied separate synchronized 4K recordings of Black Cow through
+Windows/Apple Music and Schiit/Lyr+/WiiM. Both are 3840x2160 HEVC at nominal
+60000/1001 fps with 48 kHz stereo AAC. The OLED source label and diagnostic
+SYNC footer are visible. Windows shows volume 65 and Dolby Surround; Lyr+
+shows volume 60 and Stereo. This is a timing comparison across different
+playback paths, not a matched electrical-level or identical-master experiment.
+
+The bounded capture `Box1VUComparison_20261011_172641_742` completed all three
+writers. It contains 18,134 valid raw records at 99.97 Hz: receipt spacing
+median/p95/p99/max 10.00/14.99/16.92/26.62 ms. Sampled receipt-to-first-HKLM
+observation is 10.11/17.23 ms median/p95; latest-data age at the sampled command
+clock is 7.15/12.23 ms. Actual command cadence remains about 46.60 ms median,
+48.04 ms p95. No malformed tail was present. These are software delivery
+measurements, not physical latency sums.
+
+Analysis used the first 15 seconds of each video, retaining original packet
+presentation timestamps. The left needle was measured by positive brightness
+above a static median background along candidate radial lines. Six sampled
+frames per recording were visually checked against the extracted angles.
+An affine-independent pattern alignment to logged left display values gives
+correlations 0.993 for Windows and 0.982 for Lyr+. This verifies the measured
+needle trace follows the command pattern; maximizing that alignment alone
+cannot independently measure render delay. The readable Lyr+ footer near
+video 8 seconds is `SYNC 1791764975.026`, consistent with the matched log row.
+
+The capture ends around 17:29:43 local time, approximately 16 seconds into
+the Lyr+ recording. The later video remains useful as visual/audio evidence,
+but has no corresponding high-rate telemetry in this capture. No missing
+late rows have been invented. The numerical results below use only the
+overlapping portion. Local scratch analysis, crops, traces and result JSON
+are retained under ignored `diagnostics/captures`, not committed as media or logs.
+
+Phone audio was decoded to mono 8 kHz and measured in 10 ms RMS blocks. Applying
+the same illustrative 85/520 power envelope to that microphone reference gives
+the following pattern alignments. Positive lag means the needle follows the
+microphone-derived envelope. This common block model is not an exact recreation
+of AudioLevel's per-sample asymmetric envelope.
+
+| Comparison | Best pattern lag | Correlation / repeatability |
+|---|---|---|
+| Windows needle vs common microphone envelope, video 5–14 s | -10 ms | 0.816; three subwindows -20/0/-10 ms |
+| Lyr+ needle vs common microphone envelope, video 2–14 s | +60 ms | 0.816; three subwindows +70/+60/+50 ms |
+| Lyr+ raw left/right RMS vs microphone RMS | +40 ms each | 0.751/0.758; all three subwindows +40 ms on both channels |
+| Lyr+ raw left/right peak vs microphone RMS | +40 ms each | 0.666/0.674 |
+| Same 85/520 envelope applied to Lyr+ raw RMS and microphone RMS | +50 ms each | 0.819/0.828 |
+
+The recordings support the user's residual-lag observation. They suggest much
+of the offset is already present in incoming raw RMS and peak patterns, before
+the collector's attack/decay envelope. They do not establish a precise 40 ms
+hardware delay or identify its individual source. The raw-data comparison uses
+a video start fitted to command/needle motion, so its optical/display offset
+remains part of the estimate. Microphone AGC, room acoustics, mono mixing,
+different masters and downstream audio processing also change the reference.
+Camera frame timing, exposure and sampled probe clocks add uncertainty; 10 ms
+search increments are computational resolution, not a confidence interval.
+
+Consequently no attack/decay or adaptive-gain retuning was selected from this
+evidence. Shortening attack would risk compensating for an upstream offset
+while changing the musical envelope. The next useful inspection is the actual
+firmware 0.18 RMS/peak integration window, sample/DMA buffering and USB report
+path. Only UF2 artifacts have been located so far; build source is needed to
+make a narrowly scoped, reproducible firmware change. No firmware was flashed,
+production code changed, or second physical recording session requested in
+this analysis. Perceptual equivalence and task completion remain unproven.
+
 ### Measured path and limits
 
 | Stage | Evidence / contribution |
 |---|---|
-| WiiM analog event relative to heard audio | Not synchronized by available captures; playback/source clocks are not timing references. |
+| WiiM analog event relative to heard audio | Paired phone recordings now provide a microphone-relative pattern reference as described above. An electrical analog-event timestamp remains unavailable; playback/source clocks are not timing references. |
 | PCM1808 conversion/filter | TI specifies digital-filter delay 17.4/fs; 0.36 ms at 48 kHz, conditional on actual fs. Current fs has not been independently verified. |
 | Pico sampling, raw RMS window and USB batching | Firmware 0.18 emits approximately 100 reports/s. Window length, DMA buffering and sample timestamps remain unknown; only UF2 artifacts were found, not build source. A 10 ms report period does not prove a 10 ms RMS window. |
 | Serial receipt | About 100 Hz. Completed baseline median spacing 9.94 ms, p95 16.65 ms, p99 25.28 ms; post-change 9.96 / 15.74 / 22.58 ms. Acquisition is continuously decoupled from publication. |
